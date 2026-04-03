@@ -207,7 +207,7 @@ export default function App() {
     const idMatch = cleanLine.match(/id\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
     const frMatch = cleanLine.match(/(?:fr|from)\s*=\s*(0x[a-f0-9]+|[a-f0-9]+)/i);
     const toMatch = cleanLine.match(/to\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
-    const relayMatch = cleanLine.match(/relay\s*=\s*(0x[a-f0-9]+)/i);
+    const relayMatch = cleanLine.match(/relay\s*=\s*0x([a-f0-9]+)/i);
     const portMatch = cleanLine.match(/Portnum=(\d+)/i);
     const hopLimitMatch = cleanLine.match(/HopLim=(\d+)/i);
 
@@ -257,13 +257,13 @@ export default function App() {
                           cleanLine.includes("enqueue for send");
 
     const myIdNormalized = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
-    const myRelayByte = '0x' + myIdNormalized.slice(-2);
+    const myRelayByte = myIdNormalized.slice(-2).padStart(2, '0');
+    const relayByte = relayMatch ? relayMatch[1].toLowerCase().slice(-2).padStart(2, '0') : null;
 
     // Always store relay mapping if found, even if not tracked yet
-    if (relayMatch && !isError && !isSendingEvent) {
-      const newRelay = relayMatch[1].toLowerCase();
-      if (newRelay !== myRelayByte) {
-        packetMapRef.current[currentPacketId] = newRelay;
+    if (relayByte && !isError && !isSendingEvent) {
+      if (relayByte !== myRelayByte) {
+        packetMapRef.current[currentPacketId] = relayByte;
       }
     }
 
@@ -305,7 +305,7 @@ export default function App() {
                          !isToMe;
 
     if (isRebroadcast) {
-      const relay = packetMapRef.current[currentPacketId] || (relayMatch ? relayMatch[1].toLowerCase() : null);
+      const relay = packetMapRef.current[currentPacketId] || relayByte;
       
       if (relay && relay !== myRelayByte) {
         // If not tracked yet, but we see a rebroadcast of something from us, track it!
@@ -316,7 +316,7 @@ export default function App() {
         }
 
         // Update relay nodes state
-        if (collectAllStatsRef.current || isTracked) {
+        if (collectAllStatsRef.current || isTracked || trackedPacketIdsRef.current.includes(currentPacketId)) {
           const newEntry = { id: currentPacketId, port: finalPortName, snr: currentSnr || undefined, rssi: currentRssi || undefined };
           setRelayNodes(prev => {
             const existing = prev.find(n => n.byte === relay);
@@ -339,7 +339,7 @@ export default function App() {
         }
 
         if (isSomeoneRebroadcasting) {
-          addLog(`[${finalPortName}] SUCCESS! Relay detected. Byte: ${relay} for packet ${currentPacketId}`, 'success');
+          addLog(`[${finalPortName}] SUCCESS! Relay detected. Byte: 0x${relay} for packet ${currentPacketId}`, 'success');
         }
       }
     }
@@ -364,16 +364,30 @@ export default function App() {
   };
 
   const renderHighlightedLog = (text: string, id: number) => {
+    const myLastByte = myNodeId.slice(-2).toLowerCase().padStart(2, '0');
+    
     const patterns = [
       { regex: /msg\s*=\s*.*?(?=\s\w+=|$)/gi, style: 'bg-blue-500/20 text-blue-300 px-1 rounded' },
-      { regex: /relay\s*=\s*0x[a-f0-9]+/gi, style: 'bg-orange-500/30 text-orange-400 font-bold px-1 rounded' },
+      { 
+        regex: /relay\s*=\s*0x[a-f0-9]+/gi, 
+        getStyle: (match: string) => {
+          const hexPart = match.split('0x')[1]?.toLowerCase() || '';
+          const byte = hexPart.slice(-2).padStart(2, '0');
+          if (byte === myLastByte) {
+            return 'bg-orange-500/30 text-orange-400 font-bold px-1 rounded border border-orange-500/20';
+          }
+          return 'bg-green-500/30 text-green-400 font-bold px-1 rounded border border-green-500/20 animate-pulse';
+        }
+      },
       { regex: /someone rebroadcasting for us/gi, style: 'bg-green-500/30 text-green-400 font-bold px-1 rounded' }
     ];
 
     let parts: (string | React.ReactNode)[] = [text];
 
-    patterns.forEach(({ regex, style }) => {
+    patterns.forEach((pattern) => {
+      const { regex } = pattern;
       const newParts: (string | React.ReactNode)[] = [];
+      
       parts.forEach(part => {
         if (typeof part !== 'string') {
           newParts.push(part);
@@ -390,6 +404,7 @@ export default function App() {
         splitParts.forEach((splitPart, i) => {
           if (splitPart !== "") newParts.push(splitPart);
           if (i < splitParts.length - 1 && matches[i]) {
+            const style = 'style' in pattern ? pattern.style : pattern.getStyle(matches[i]);
             newParts.push(<span key={`${id}-${regex.source}-${i}`} className={style}>{matches[i]}</span>);
           }
         });
@@ -526,7 +541,7 @@ export default function App() {
                     >
                       <div className="bg-app-surface/50 px-3 py-1.5 flex justify-between items-center border-b border-app-border">
                         <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Relay Byte</span>
-                        <span className="text-orange-400 font-mono font-bold text-sm">{node.byte}</span>
+                        <span className="text-orange-400 font-mono font-bold text-sm">0x{node.byte}</span>
                       </div>
                       
                       <div className="p-2">
@@ -549,9 +564,15 @@ export default function App() {
                                   {entry.id}
                                 </span>
                                 {trackedPacketIds.includes(entry.id) && packetMessages[entry.id] && (
-                                  <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover/packet:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-blue-300">
-                                    <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider text-[9px]">Message Content</p>
-                                    {packetMessages[entry.id]}
+                                  <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-50 text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
+                                    <div className="relative z-10">
+                                      <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Message Content</p>
+                                      <div className="italic text-gray-300">
+                                        "{packetMessages[entry.id]}"
+                                      </div>
+                                    </div>
+                                    {/* Arrow/Tail */}
+                                    <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-[#1c212c] border-r border-b border-blue-500/50 rotate-45 z-0" />
                                   </div>
                                 )}
                               </div>
@@ -596,9 +617,15 @@ export default function App() {
                                 {packetId}
                               </span>
                               {isOurs && packetMessages[packetId] && (
-                                <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover/packet:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-blue-300">
-                                  <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider text-[9px]">Message Content</p>
-                                  {packetMessages[packetId]}
+                                <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-50 text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
+                                  <div className="relative z-10">
+                                    <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Message Content</p>
+                                    <div className="italic text-gray-300">
+                                      "{packetMessages[packetId]}"
+                                    </div>
+                                  </div>
+                                  {/* Arrow/Tail */}
+                                  <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-[#1c212c] border-r border-b border-blue-500/50 rotate-45 z-0" />
                                 </div>
                               )}
                             </div>
@@ -607,7 +634,7 @@ export default function App() {
                             {relaysForThisPacket.length > 0 ? relaysForThisPacket.map(r => (
                               <div key={r.byte} className="flex flex-col gap-1 bg-orange-500/10 border border-orange-500/30 p-1.5 rounded min-w-[60px]">
                                 <span className="text-orange-400 font-mono font-bold text-center border-b border-orange-500/20 pb-1 mb-1">
-                                  {r.byte}
+                                  0x{r.byte}
                                 </span>
                                 <div className="flex justify-between text-[10px] font-mono">
                                   <span className="text-gray-500">SNR</span>

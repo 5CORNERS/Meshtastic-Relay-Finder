@@ -6,3 +6,29 @@
   --color-app-surface: #151921;
   --color-app-terminal: #05070a;
 }
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3f4654 #0b0e14;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #0b0e14;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: #3f4654;
+    border-radius: 20px;
+    border: 2px solid #0b0e14;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #4f5869;
+  }
+}
