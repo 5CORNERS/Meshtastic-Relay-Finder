@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Fields:
+    //   - nodeId: string (required)
+    //   - lastSeen: timestamp (optional)
+    //
+    // Collection: /users/{userId}/logs/{logId}
+    // Fields:
+    //   - text: string (required)
+    //   - type: string (required, enum)
+    //   - timestamp: string (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: /users/{userId}/relays/{relayId}
+    // Fields:
+    //   - byte: string (required)
+    //   - entries: list (required)
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['nodeId']) &&
+             data.nodeId is string && data.nodeId.size() > 0 && data.nodeId.size() < 20;
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll(['text', 'type', 'timestamp', 'createdAt']) &&
+             data.text is string && data.text.size() < 10000 &&
+             data.type in ['info', 'success', 'warning', 'error', 'serial'] &&
+             data.timestamp is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidRelay(data) {
+      return data.keys().hasAll(['byte', 'entries', 'updatedAt']) &&
+             data.byte is string &&
+             data.entries is list &&
+             data.updatedAt is timestamp;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) && (request.method == 'delete' || isValidUser(request.resource.data));
+
+      match /logs/{logId} {
+        allow read, write: if isOwner(userId) && (request.method == 'delete' || isValidLog(request.resource.data));
+      }
+
+      match /relays/{relayId} {
+        allow read, write: if isOwner(userId) && (request.method == 'delete' || isValidRelay(request.resource.data));
+      }
+    }
+  }
+}

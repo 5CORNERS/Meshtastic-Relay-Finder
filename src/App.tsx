@@ -76,17 +76,17 @@ export default function App() {
   const getSnrColor = (snr: string | undefined) => {
     if (!snr) return 'text-gray-400';
     const val = parseFloat(snr);
-    if (val >= -10) return 'text-green-400';
-    if (val >= -15) return 'text-amber-300';
-    return 'text-orange-600';
+    if (val >= -7) return 'text-green-400';
+    if (val >= -15) return 'text-amber-400';
+    return 'text-red-400';
   };
 
   const getRssiColor = (rssi: string | undefined) => {
     if (!rssi) return 'text-gray-400';
     const val = parseFloat(rssi);
-    if (val >= -110) return 'text-green-400';
-    if (val >= -120) return 'text-amber-300';
-    return 'text-orange-600';
+    if (val >= -115) return 'text-green-400';
+    if (val >= -126) return 'text-amber-400';
+    return 'text-red-400';
   };
 
   useEffect(() => {
@@ -362,9 +362,9 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen bg-[#0f1115] text-gray-200 font-sans flex flex-col overflow-hidden">
+    <div className="h-screen bg-app-bg text-gray-200 font-sans flex flex-col overflow-hidden">
       {/* Header / Top Bar */}
-      <header className="sticky top-0 bg-[#1a1d23] border-b border-[#1a1d23] px-6 py-3 flex justify-between items-center z-30 shadow-md shrink-0">
+      <header className="sticky top-0 bg-app-surface border-b border-app-border px-6 py-3 flex justify-between items-center z-30 shadow-md shrink-0">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="bg-blue-600 p-1.5 rounded text-white">
@@ -373,10 +373,10 @@ export default function App() {
             <h1 className="text-lg font-bold tracking-tight hidden sm:block">Relay Finder</h1>
           </div>
 
-          <div className="h-6 w-px bg-[#1a1d23] mx-2 hidden sm:block" />
+          <div className="h-6 w-px bg-app-border mx-2 hidden sm:block" />
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1 bg-[#0f1115] border border-[#1a1d23] rounded p-1 group relative">
+            <div className="flex items-center gap-1 bg-app-bg border border-app-border rounded p-1 group relative">
               <div className="relative">
                 <input
                   type="text"
@@ -389,7 +389,7 @@ export default function App() {
                 <Search className="absolute left-2 top-2 text-gray-500" size={12} />
               </div>
               
-              <div className="h-4 w-px bg-[#1a1d23] mx-1" />
+              <div className="h-4 w-px bg-app-border mx-1" />
               
               <div className="flex items-center gap-2 px-2 py-0.5 cursor-help">
                 <span className="text-[9px] text-gray-500 font-bold uppercase">Add All</span>
@@ -401,14 +401,14 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-gray-800 border border-[#1a1d23] rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
+              <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
                 <p className="font-bold text-orange-400 mb-1 uppercase tracking-wider">Node Tracking Mode</p>
                 <p className="mb-2">Enter your Node ID to track your own messages in the terminal.</p>
                 <p><span className="text-orange-400 font-bold">ADD ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours.</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0f1115] border border-[#1a1d23] rounded text-[10px] font-bold group relative cursor-help">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-[10px] font-bold group relative cursor-help">
               <span className="text-gray-500 uppercase">Filter Noise</span>
               <button 
                 onClick={() => setFilterTelemetry(!filterTelemetry)}
@@ -416,7 +416,7 @@ export default function App() {
               >
                 <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${filterTelemetry ? 'left-4.5' : 'left-0.5'}`} />
               </button>
-              <div className="absolute top-full left-0 mt-2 w-56 p-3 bg-gray-800 border border-[#1a1d23] rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
+              <div className="absolute top-full left-0 mt-2 w-56 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
                 <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider">Noise Filter</p>
                 When ON, it hides background traffic like position updates and telemetry, showing only your messages and their relays.
               </div>
@@ -441,7 +441,7 @@ export default function App() {
             ) : (
               <button 
                 onClick={disconnect} 
-                className="flex items-center gap-2 px-4 py-1.5 border border-[#1a1d23] hover:bg-gray-800 text-gray-300 rounded font-bold text-xs transition-all"
+                className="flex items-center gap-2 px-4 py-1.5 border border-app-border hover:bg-app-surface text-gray-300 rounded font-bold text-xs transition-all"
               >
                 <RefreshCw size={14} className={isReceiving ? "animate-spin" : ""} /> Disconnect
               </button>
@@ -452,9 +452,9 @@ export default function App() {
 
       <main className="flex-1 flex overflow-hidden">
         {/* Left Status Panel */}
-        <aside className="w-72 bg-[#16191e] border-r border-[#1a1d23] flex flex-col shrink-0 overflow-hidden">
-          <div className="p-4 border-b border-[#1a1d23]">
-            <div className="flex bg-[#0f1115] p-1 rounded-lg border border-[#1a1d23]">
+        <aside className="w-72 bg-app-surface border-r border-app-border flex flex-col shrink-0 overflow-hidden">
+          <div className="p-4 border-b border-app-border">
+            <div className="flex bg-app-bg p-1 rounded-lg border border-app-border">
               <button 
                 onClick={() => setRelayViewMode('by-node')}
                 className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded transition-all ${relayViewMode === 'by-node' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
@@ -479,15 +479,15 @@ export default function App() {
                       initial={{ x: -10, opacity: 0 }}
                       animate={{ x: 0, opacity: 1 }}
                       key={node.byte} 
-                      className="bg-[#1a1d23] border border-[#1a1d23] rounded overflow-hidden shadow-sm"
+                      className="bg-app-surface border border-app-border rounded overflow-hidden shadow-sm"
                     >
-                      <div className="bg-[#23272f] px-3 py-1.5 flex justify-between items-center border-b border-[#1a1d23]">
+                      <div className="bg-app-surface/50 px-3 py-1.5 flex justify-between items-center border-b border-app-border">
                         <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Relay Byte</span>
                         <span className="text-orange-400 font-mono font-bold text-sm">{node.byte}</span>
                       </div>
                       
                       <div className="p-2">
-                        <div className="grid grid-cols-3 gap-2 mb-1.5 px-1 border-b border-[#1a1d23] pb-1">
+                        <div className="grid grid-cols-3 gap-2 mb-1.5 px-1 border-b border-app-border pb-1">
                           <span className="text-[10px] text-gray-600 font-black uppercase">SNR</span>
                           <span className="text-[10px] text-gray-600 font-black uppercase">RSSI</span>
                           <span className="text-[10px] text-gray-600 font-black uppercase text-right">Packet</span>
@@ -510,7 +510,7 @@ export default function App() {
                       </div>
                     </motion.div>
                   )) : (
-                    <div className="py-10 border border-dashed border-[#1a1d23] rounded flex flex-col items-center justify-center text-gray-600">
+                    <div className="py-10 border border-dashed border-app-border rounded flex flex-col items-center justify-center text-gray-600">
                       <RefreshCw size={20} className="opacity-20 mb-2" />
                       <span className="text-[10px] font-bold uppercase tracking-tighter">No relays yet</span>
                     </div>
@@ -535,9 +535,9 @@ export default function App() {
                           initial={{ x: -10, opacity: 0 }}
                           animate={{ x: 0, opacity: 1 }}
                           key={packetId} 
-                          className="bg-[#1a1d23] border border-[#1a1d23] p-3 rounded flex flex-col gap-2 shadow-sm"
+                          className="bg-app-surface border border-app-border p-3 rounded flex flex-col gap-2 shadow-sm"
                         >
-                          <div className="flex justify-between items-center border-b border-[#1a1d23] pb-1.5">
+                          <div className="flex justify-between items-center border-b border-app-border pb-1.5">
                             <span className="text-[10px] text-gray-500 font-bold uppercase">Packet</span>
                             <span className={`font-mono text-[11px] ${isOurs ? 'text-blue-400' : 'text-gray-500'}`}>{packetId}</span>
                           </div>
@@ -563,7 +563,7 @@ export default function App() {
                         </motion.div>
                       );
                     }) : (
-                      <div className="py-10 border border-dashed border-[#1a1d23] rounded flex flex-col items-center justify-center text-gray-600">
+                      <div className="py-10 border border-dashed border-app-border rounded flex flex-col items-center justify-center text-gray-600">
                         <RefreshCw size={20} className="opacity-20 mb-2" />
                         <span className="text-[10px] font-bold uppercase tracking-tighter">No packets tracked</span>
                       </div>
@@ -574,7 +574,7 @@ export default function App() {
             </section>
           </div>
 
-          <section className="mt-auto p-4 border-t border-[#1a1d23] space-y-2">
+          <section className="mt-auto p-4 border-t border-app-border space-y-2">
             <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 uppercase">
               <span>Tracked</span>
               <span className="text-blue-400">{trackedPacketIds.length}</span>
@@ -585,19 +585,31 @@ export default function App() {
             </div>
             <button 
               onClick={clearAll}
-              className="w-full mt-4 flex items-center justify-center gap-2 py-2 bg-cyan-900/10 hover:bg-cyan-900/20 text-cyan-400 hover:text-cyan-300 border border-cyan-900/30 hover:border-cyan-400/50 rounded text-[10px] font-bold transition-all uppercase shadow-sm"
+              className="w-full mt-4 flex items-center justify-center gap-2 py-2 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-bold transition-all uppercase shadow-sm"
             >
               <Trash2 size={12} /> Clear Session
             </button>
+
+            <div className="pt-4 text-center">
+              <a 
+                href="https://le-francais.ru" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-[9px] font-bold text-gray-600 hover:text-blue-400 transition-colors uppercase tracking-widest flex items-center justify-center gap-1.5"
+              >
+                Powered by <span className="text-gray-500">le-francais.ru</span>
+                <ExternalLink size={10} />
+              </a>
+            </div>
           </section>
         </aside>
 
         {/* Log Terminal */}
-        <section className="flex-1 flex flex-col bg-[#0f1115] relative">
+        <section className="flex-1 flex flex-col bg-app-bg relative">
           <div className="absolute top-4 right-6 z-10">
             <button 
               onClick={() => setAutoScroll(!autoScroll)}
-              className={`px-3 py-1 rounded text-[9px] font-black tracking-widest transition-all border ${autoScroll ? 'bg-blue-600/20 text-blue-400 border-blue-500/50' : 'bg-[#1a1d23] text-gray-500 border-[#1a1d23]'}`}
+              className={`px-3 py-1 rounded text-[9px] font-black tracking-widest transition-all border ${autoScroll ? 'bg-blue-600/20 text-blue-400 border-blue-500/50' : 'bg-app-border text-gray-500 border-app-border'}`}
             >
               {autoScroll ? 'AUTO-SCROLL: ON' : 'AUTO-SCROLL: OFF'}
             </button>
@@ -636,8 +648,8 @@ export default function App() {
       <style dangerouslySetInnerHTML={{ __html: `
         .scrollbar-thin::-webkit-scrollbar { width: 6px; }
         .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-        .scrollbar-thin::-webkit-scrollbar-thumb { background: #1a1d23; border-radius: 10px; }
-        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #2a2d33; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--color-app-border); border-radius: 10px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: var(--color-app-surface); }
       `}} />
     </div>
   );

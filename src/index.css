@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+@theme {
+  --color-app-border: #13151a;
+  --color-app-bg: #0f1115;
+  --color-app-surface: #1a1d23;
+  --color-app-terminal: #0a0c10;
+}
