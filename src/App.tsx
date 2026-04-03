@@ -431,7 +431,7 @@ export default function App() {
               <div className="h-4 w-px bg-app-border mx-1" />
               
               <div className="flex items-center gap-2 px-2 py-0.5 cursor-help">
-                <span className="text-[9px] text-gray-500 font-bold uppercase">Collect All</span>
+                <span className="text-[11px] text-gray-500 font-bold uppercase">Collect All</span>
                 <button 
                   onClick={() => setCollectAllStats(!collectAllStats)}
                   className={`w-7 h-3.5 rounded-full transition-all relative ${collectAllStats ? 'bg-orange-600 shadow-[0_0_8px_rgba(234,88,12,0.4)]' : 'bg-gray-600'}`}
@@ -440,14 +440,14 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
+              <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-xs normal-case font-medium leading-relaxed text-gray-300">
                 <p className="font-bold text-orange-400 mb-1 uppercase tracking-wider">Node Tracking Mode</p>
                 <p className="mb-2">Enter your Node ID to track your own messages in the terminal.</p>
                 <p><span className="text-orange-400 font-bold">COLLECT ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours.</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-[10px] font-bold group relative cursor-help">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-xs font-bold group relative cursor-help">
               <span className="text-gray-500 uppercase">Filter Noise</span>
               <button 
                 onClick={() => setFilterTelemetry(!filterTelemetry)}
@@ -455,7 +455,7 @@ export default function App() {
               >
                 <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${filterTelemetry ? 'left-4.5' : 'left-0.5'}`} />
               </button>
-              <div className="absolute top-full left-0 mt-2 w-56 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
+              <div className="absolute top-full left-0 mt-2 w-56 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-xs normal-case font-medium leading-relaxed text-gray-300">
                 <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider">Noise Filter</p>
                 When ON, it hides background traffic like position updates and telemetry, showing only your messages and their relays.
               </div>
@@ -464,7 +464,7 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-2 text-[10px] font-bold text-gray-500">
+          <div className="hidden md:flex items-center gap-2 text-xs font-bold text-gray-500">
             <div className={`w-2 h-2 rounded-full ${isReceiving ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
             {isConnected ? (isReceiving ? 'RECEIVING DATA' : 'CONNECTED') : 'OFFLINE'}
           </div>
@@ -637,7 +637,7 @@ export default function App() {
           </div>
 
           <section className="mt-auto p-3 border-t border-app-border space-y-2">
-            <div className="flex justify-center gap-4 items-center text-[10px] font-bold text-gray-500 uppercase">
+            <div className="flex justify-center gap-4 items-center text-xs font-bold text-gray-500 uppercase">
               <div className="flex gap-1">
                 <span>Tracked</span>
                 <span className="text-blue-400">{trackedPacketIds.length}</span>
@@ -650,7 +650,7 @@ export default function App() {
             </div>
             <button 
               onClick={clearAll}
-              className="w-full flex items-center justify-center gap-2 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-bold transition-all uppercase shadow-sm"
+              className="w-full flex items-center justify-center gap-2 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-xs font-bold transition-all uppercase shadow-sm"
             >
               <Trash2 size={12} /> Clear Session
             </button>
