@@ -22,24 +22,28 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [myNodeId, setMyNodeId] = useState<string>("!9e7620e0");
   const [filterTelemetry, setFilterTelemetry] = useState(true);
-  const [addAllStats, setAddAllStats] = useState(false);
+  const [collectAllStats, setCollectAllStats] = useState(false);
   const [trackedPacketIds, setTrackedPacketIds] = useState<string[]>([]);
+  const [allSeenPacketIds, setAllSeenPacketIds] = useState<string[]>([]);
   const [relayNodes, setRelayNodes] = useState<{
     byte: string, 
     entries: {id: string, port: string, snr?: string, rssi?: string}[]
   }[]>([]);
   const [relayViewMode, setRelayViewMode] = useState<'by-node' | 'by-packet'>('by-node');
+  const [packetMessages, setPacketMessages] = useState<Record<string, string>>({});
+  const [relayAutoScroll, setRelayAutoScroll] = useState(true);
   const [isReceiving, setIsReceiving] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   
   const myNodeIdRef = useRef<string>("!9e7620e0");
   const filterTelemetryRef = useRef<boolean>(true);
-  const addAllStatsRef = useRef<boolean>(false);
+  const collectAllStatsRef = useRef<boolean>(false);
   const trackedPacketIdsRef = useRef<string[]>([]);
   const packetMapRef = useRef<Record<string, string>>({}); // packetId -> relay byte
   const portMapRef = useRef<Record<string, string>>({}); // packetId -> portName
   const lastDataTime = useRef<number>(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const relayListRef = useRef<HTMLDivElement>(null);
   const logCounter = useRef(0);
 
   const PORTNUM_MAP: Record<string, string> = {
@@ -69,8 +73,8 @@ export default function App() {
   }, [filterTelemetry]);
 
   useEffect(() => {
-    addAllStatsRef.current = addAllStats;
-  }, [addAllStats]);
+    collectAllStatsRef.current = collectAllStats;
+  }, [collectAllStats]);
 
   // --- Helpers ---
   const getSnrColor = (snr: string | undefined) => {
@@ -130,6 +134,27 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [logs, autoScroll]);
+
+  useEffect(() => {
+    if (relayAutoScroll && relayListRef.current) {
+      relayListRef.current.scrollTop = relayListRef.current.scrollHeight;
+    }
+  }, [relayNodes, trackedPacketIds, relayAutoScroll]);
+
+  useEffect(() => {
+    if (relayListRef.current) {
+      relayListRef.current.scrollTop = relayListRef.current.scrollHeight;
+      setRelayAutoScroll(true);
+    }
+  }, [relayViewMode]);
+
+  const handleRelayScroll = () => {
+    if (relayListRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = relayListRef.current;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 10;
+      setRelayAutoScroll(isAtBottom);
+    }
+  };
 
   // --- Serial Logic ---
   const connect = async () => {
@@ -195,10 +220,22 @@ export default function App() {
 
     const snrMatch = cleanLine.match(/rxSNR=(-?\d+\.?\d*)/i);
     const rssiMatch = cleanLine.match(/rxRSSI=(-?\d+)/i);
+    const msgMatch = cleanLine.match(/msg\s*=\s*(.*?)(?=\s\w+=|$)/i);
+    
     const currentSnr = snrMatch ? snrMatch[1] : null;
     const currentRssi = rssiMatch ? rssiMatch[1] : null;
 
     if (!currentPacketId) return;
+
+    setAllSeenPacketIds(prev => {
+      if (prev.includes(currentPacketId)) return prev;
+      return [...prev, currentPacketId];
+    });
+
+    // Store message text if found
+    if (msgMatch) {
+      setPacketMessages(prev => ({ ...prev, [currentPacketId]: msgMatch[1].trim() }));
+    }
 
     // Cache port name
     if (portName !== 'UNKNOWN') {
@@ -279,7 +316,7 @@ export default function App() {
         }
 
         // Update relay nodes state
-        if (addAllStatsRef.current || isTracked) {
+        if (collectAllStatsRef.current || isTracked) {
           const newEntry = { id: currentPacketId, port: finalPortName, snr: currentSnr || undefined, rssi: currentRssi || undefined };
           setRelayNodes(prev => {
             const existing = prev.find(n => n.byte === relay);
@@ -318,8 +355,10 @@ export default function App() {
   const clearAll = () => {
     setLogs([]);
     setTrackedPacketIds([]);
+    setAllSeenPacketIds([]);
     trackedPacketIdsRef.current = [];
     setRelayNodes([]);
+    setPacketMessages({});
     packetMapRef.current = {};
     portMapRef.current = {};
   };
@@ -392,19 +431,19 @@ export default function App() {
               <div className="h-4 w-px bg-app-border mx-1" />
               
               <div className="flex items-center gap-2 px-2 py-0.5 cursor-help">
-                <span className="text-[9px] text-gray-500 font-bold uppercase">Add All</span>
+                <span className="text-[9px] text-gray-500 font-bold uppercase">Collect All</span>
                 <button 
-                  onClick={() => setAddAllStats(!addAllStats)}
-                  className={`w-7 h-3.5 rounded-full transition-all relative ${addAllStats ? 'bg-orange-600 shadow-[0_0_8px_rgba(234,88,12,0.4)]' : 'bg-gray-600'}`}
+                  onClick={() => setCollectAllStats(!collectAllStats)}
+                  className={`w-7 h-3.5 rounded-full transition-all relative ${collectAllStats ? 'bg-orange-600 shadow-[0_0_8px_rgba(234,88,12,0.4)]' : 'bg-gray-600'}`}
                 >
-                  <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full transition-all ${addAllStats ? 'left-4' : 'left-0.5'}`} />
+                  <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full transition-all ${collectAllStats ? 'left-4' : 'left-0.5'}`} />
                 </button>
               </div>
 
               <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-gray-300">
                 <p className="font-bold text-orange-400 mb-1 uppercase tracking-wider">Node Tracking Mode</p>
                 <p className="mb-2">Enter your Node ID to track your own messages in the terminal.</p>
-                <p><span className="text-orange-400 font-bold">ADD ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours.</p>
+                <p><span className="text-orange-400 font-bold">COLLECT ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours.</p>
               </div>
             </div>
 
@@ -470,7 +509,11 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div 
+            className="flex-1 overflow-y-auto p-4 space-y-4" 
+            ref={relayListRef}
+            onScroll={handleRelayScroll}
+          >
             <section>
               <div className="space-y-2">
                 {relayViewMode === 'by-node' ? (
@@ -501,9 +544,17 @@ export default function App() {
                               <span className={`text-xs font-mono font-bold ${getRssiColor(entry.rssi)}`}>
                                 {entry.rssi ? `${entry.rssi} dBm` : '—'}
                               </span>
-                              <span className={`font-mono text-xs text-right truncate ${trackedPacketIds.includes(entry.id) ? 'text-blue-400' : 'text-gray-500'}`}>
-                                {entry.id}
-                              </span>
+                              <div className="relative group/packet flex justify-end">
+                                <span className={`font-mono text-xs text-right truncate ${trackedPacketIds.includes(entry.id) && packetMessages[entry.id] ? 'cursor-help' : ''} ${trackedPacketIds.includes(entry.id) ? 'text-blue-400' : 'text-gray-500'}`}>
+                                  {entry.id}
+                                </span>
+                                {trackedPacketIds.includes(entry.id) && packetMessages[entry.id] && (
+                                  <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover/packet:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-blue-300">
+                                    <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider text-[9px]">Message Content</p>
+                                    {packetMessages[entry.id]}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -518,11 +569,12 @@ export default function App() {
                 ) : (
                   // By Packet View
                   (() => {
-                    const allPacketIds = addAllStats 
-                      ? Array.from(new Set([...trackedPacketIds, ...relayNodes.flatMap(n => n.entries.map(e => e.id))]))
-                      : trackedPacketIds;
+                    const displayPacketIds = allSeenPacketIds.filter(id => 
+                      trackedPacketIds.includes(id) || 
+                      (collectAllStats && relayNodes.some(n => n.entries.some(e => e.id === id)))
+                    );
                     
-                    return allPacketIds.length > 0 ? [...allPacketIds].reverse().map(packetId => {
+                    return displayPacketIds.length > 0 ? displayPacketIds.map(packetId => {
                       const relaysForThisPacket = relayNodes.flatMap(n => 
                         n.entries
                           .filter(e => e.id === packetId)
@@ -539,7 +591,17 @@ export default function App() {
                         >
                           <div className="flex justify-between items-center border-b border-app-border pb-1.5">
                             <span className="text-[10px] text-gray-500 font-bold uppercase">Packet</span>
-                            <span className={`font-mono text-[11px] ${isOurs ? 'text-blue-400' : 'text-gray-500'}`}>{packetId}</span>
+                            <div className="relative group/packet flex justify-end">
+                              <span className={`font-mono text-[11px] ${isOurs && packetMessages[packetId] ? 'cursor-help' : ''} ${isOurs ? 'text-blue-400' : 'text-gray-500'}`}>
+                                {packetId}
+                              </span>
+                              {isOurs && packetMessages[packetId] && (
+                                <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover/packet:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] normal-case font-medium leading-relaxed text-blue-300">
+                                  <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider text-[9px]">Message Content</p>
+                                  {packetMessages[packetId]}
+                                </div>
+                              )}
+                            </div>
                           </div>
                           <div className="flex flex-wrap gap-1.5">
                             {relaysForThisPacket.length > 0 ? relaysForThisPacket.map(r => (
@@ -574,31 +636,44 @@ export default function App() {
             </section>
           </div>
 
-          <section className="mt-auto p-4 border-t border-app-border space-y-2">
-            <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 uppercase">
-              <span>Tracked</span>
-              <span className="text-blue-400">{trackedPacketIds.length}</span>
-            </div>
-            <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 uppercase">
-              <span>Logs</span>
-              <span className="text-gray-400">{logs.length}</span>
+          <section className="mt-auto p-3 border-t border-app-border space-y-2">
+            <div className="flex justify-center gap-4 items-center text-[10px] font-bold text-gray-500 uppercase">
+              <div className="flex gap-1">
+                <span>Tracked</span>
+                <span className="text-blue-400">{trackedPacketIds.length}</span>
+              </div>
+              <div className="w-px h-2.5 bg-app-border" />
+              <div className="flex gap-1">
+                <span>Logs</span>
+                <span className="text-gray-400">{logs.length}</span>
+              </div>
             </div>
             <button 
               onClick={clearAll}
-              className="w-full mt-4 flex items-center justify-center gap-2 py-2 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-bold transition-all uppercase shadow-sm"
+              className="w-full flex items-center justify-center gap-2 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-bold transition-all uppercase shadow-sm"
             >
               <Trash2 size={12} /> Clear Session
             </button>
 
-            <div className="pt-4 text-center">
+            <div className="pt-1 text-center">
               <a 
                 href="https://le-francais.ru" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-[9px] font-bold text-gray-600 hover:text-blue-400 transition-colors uppercase tracking-widest flex items-center justify-center gap-1.5"
+                className="text-xs font-medium text-gray-400 hover:text-blue-400 transition-colors flex items-center justify-center gap-1.5"
               >
-                Powered by <span className="text-gray-500">le-francais.ru</span>
-                <ExternalLink size={10} />
+                <span>Powered by</span>
+                <svg 
+                  viewBox="0 0 467.32 329.23" 
+                  className="h-4 w-auto inline-block"
+                  fill="#ed1c24"
+                >
+                  <path 
+                    transform="translate(-255.01, -188.36)" 
+                    d="M566.78,205.68c-28.78,28.37-59.1,56.19-65.55,102.06,16.31,4.46,33,7.44,48.48,13.58,39.3,15.61,80.3,28.86,116.14,50.49,21.53,13,38.76,37.83,50.53,61.09,16.25,32.09-2.29,71.48-37.2,71.75-111.08.85-223.27,33.09-333.22-7.5-18.51-6.83-37-15.17-53.39-26-42.46-28.06-48.95-70.82-19.34-112.53,20.9-29.45,48.15-50.16,84.39-53.34,34-3,68.42-2.71,102.56-1.44,14.63.55,21.44-2.64,24.65-17,4.93-22,11.1-43.8,17.36-65.5C513.24,183.09,529.68,178.45,566.78,205.68Z" 
+                  />
+                </svg>
+                <span className="text-white hover:text-blue-400 transition-colors">le-francais.ru</span>
               </a>
             </div>
           </section>
