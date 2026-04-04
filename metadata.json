@@ -1,5 +1,5 @@
 {
-  "name": "Meshtastic Relay Finder",
+  "name": "Relay Finder",
   "description": "Connects to a Meshtastic node via USB to identify the relaying node's ID byte from serial logs.",
   "requestFramePermissions": ["serial"]
 }
