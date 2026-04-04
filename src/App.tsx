@@ -21,7 +21,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [myNodeId, setMyNodeId] = useState<string>("!9e7620e0");
-  const [filterTelemetry, setFilterTelemetry] = useState(true);
+  const [filterTelemetry, setFilterTelemetry] = useState(false);
   const [collectAllStats, setCollectAllStats] = useState(false);
   const [trackedPacketIds, setTrackedPacketIds] = useState<string[]>([]);
   const [allSeenPacketIds, setAllSeenPacketIds] = useState<string[]>([]);
@@ -31,18 +31,25 @@ export default function App() {
   }[]>([]);
   const [relayViewMode, setRelayViewMode] = useState<'by-node' | 'by-packet'>('by-node');
   const [packetMessages, setPacketMessages] = useState<Record<string, string>>({});
+  const [requestMap, setRequestMap] = useState<Record<string, string>>({}); // responseId -> requestId
   const [relayAutoScroll, setRelayAutoScroll] = useState(true);
   const [isReceiving, setIsReceiving] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   
   const myNodeIdRef = useRef<string>("!9e7620e0");
-  const filterTelemetryRef = useRef<boolean>(true);
+  const tracerouteStateRef = useRef<{active: boolean, requestId: string | null, lines: string[]}>({active: false, requestId: null, lines: []});
+  const lastTracerouteRequestIdRef = useRef<string | null>(null);
+  const packetSignalRef = useRef<Record<string, {snr: string, rssi: string}>>({});
+  const seenSignalLogsRef = useRef<Set<string>>(new Set());
+  const filterTelemetryRef = useRef<boolean>(false);
   const collectAllStatsRef = useRef<boolean>(false);
   const trackedPacketIdsRef = useRef<string[]>([]);
   const packetMapRef = useRef<Record<string, string>>({}); // packetId -> relay byte
   const portMapRef = useRef<Record<string, string>>({}); // packetId -> portName
   const lastDataTime = useRef<number>(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
   const relayListRef = useRef<HTMLDivElement>(null);
   const logCounter = useRef(0);
 
@@ -79,6 +86,7 @@ export default function App() {
   // --- Helpers ---
   const getSnrColor = (snr: string | undefined) => {
     if (!snr) return 'text-gray-400';
+    if (snr.includes('?')) return 'text-gray-500';
     const val = parseFloat(snr);
     if (val >= -7) return 'text-green-400';
     if (val >= -15) return 'text-amber-400';
@@ -126,8 +134,23 @@ export default function App() {
   }, []);
 
   const scrollToBottom = () => {
-    if (autoScroll) {
-      logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (autoScroll && logsContainerRef.current) {
+      isProgrammaticScrollRef.current = true;
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+      // Reset after a short delay to allow scroll event to fire
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 50);
+    }
+  };
+
+  const handleLogScroll = () => {
+    if (logsContainerRef.current && !isProgrammaticScrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logsContainerRef.current;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+      if (autoScroll !== isAtBottom) {
+        setAutoScroll(isAtBottom);
+      }
     }
   };
 
@@ -208,6 +231,7 @@ export default function App() {
     const frMatch = cleanLine.match(/(?:fr|from)\s*=\s*(0x[a-f0-9]+|[a-f0-9]+)/i);
     const toMatch = cleanLine.match(/to\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
     const relayMatch = cleanLine.match(/relay\s*=\s*0x([a-f0-9]+)/i);
+    const reqIdMatch = cleanLine.match(/requestId=(0x[a-f0-9]+|[a-f0-9]{8,})/i);
     const portMatch = cleanLine.match(/Portnum=(\d+)/i);
     const hopLimitMatch = cleanLine.match(/HopLim=(\d+)/i);
 
@@ -222,8 +246,113 @@ export default function App() {
     const rssiMatch = cleanLine.match(/rxRSSI=(-?\d+)/i);
     const msgMatch = cleanLine.match(/msg\s*=\s*(.*?)(?=\s\w+=|$)/i);
     
-    const currentSnr = snrMatch ? snrMatch[1] : null;
+    let currentSnr = snrMatch ? snrMatch[1] : null;
+    if (currentSnr === "-1") currentSnr = "-1?";
     const currentRssi = rssiMatch ? rssiMatch[1] : null;
+    const currentRequestId = reqIdMatch ? reqIdMatch[1].toLowerCase().replace(/^0x/, '') : null;
+
+    if (currentPacketId && (currentSnr || currentRssi)) {
+      packetSignalRef.current[currentPacketId] = {
+        snr: currentSnr || packetSignalRef.current[currentPacketId]?.snr || '',
+        rssi: currentRssi || packetSignalRef.current[currentPacketId]?.rssi || ''
+      };
+    }
+
+    if (currentRequestId) {
+      lastTracerouteRequestIdRef.current = currentRequestId;
+      setRequestMap(prev => ({ ...prev, [currentPacketId!]: currentRequestId }));
+    }
+
+    const summaryLogsToAdd: {text: string, type: LogEntry['type']}[] = [];
+
+    // Traceroute block parsing
+    if (cleanLine.includes("Route traced:")) {
+      const reqId = lastTracerouteRequestIdRef.current;
+      tracerouteStateRef.current = { 
+        active: true, 
+        requestId: reqId, 
+        lines: [cleanLine.trim()] 
+      };
+      // Ensure we track the traceroute packet
+      if (reqId && !trackedPacketIdsRef.current.includes(reqId)) {
+        trackedPacketIdsRef.current = [...trackedPacketIdsRef.current, reqId];
+        setTrackedPacketIds([...trackedPacketIdsRef.current]);
+      }
+    } else if (tracerouteStateRef.current.active) {
+      const myIdNorm = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
+      
+      // Accumulate lines for the message content
+      if (cleanLine.includes("-->") || cleanLine.includes("<--")) {
+        tracerouteStateRef.current.lines.push(cleanLine.trim());
+      }
+
+      // Match: 0x9e7620e0 --> 0x4c47d65f (7.75dB)
+      const outboundMatch = cleanLine.match(/(0x[a-f0-9]+)\s*-->\s*(0x[a-f0-9]+)\s*\((-?\d+\.?\d*)dB\)/i);
+      // Match: (6.50dB) 0x9e7620e0 <-- 0x4c47d65f
+      const inboundMatch = cleanLine.match(/\((-?\d+\.?\d*)dB\)\s*(0x[a-f0-9]+)\s*<--\s*(0x[a-f0-9]+)/i);
+
+      if (outboundMatch || inboundMatch) {
+        const from = (outboundMatch ? outboundMatch[1] : inboundMatch![3]).toLowerCase().replace(/^0x/, '');
+        const to = (outboundMatch ? outboundMatch[2] : inboundMatch![2]).toLowerCase().replace(/^0x/, '');
+        let snr = outboundMatch ? outboundMatch[3] : inboundMatch![1];
+        if (snr === "-1") snr = "-1?";
+        const isOutbound = !!outboundMatch;
+
+        if (from === myIdNorm || to === myIdNorm) {
+          const targetNode = from === myIdNorm ? to : from;
+          const relayByte = targetNode.slice(-2).padStart(2, '0');
+          
+          setRelayNodes(prev => {
+            const existing = prev.find(n => n.byte === relayByte);
+            const entry = { 
+              id: tracerouteStateRef.current.requestId || 'TRACEROUTE', 
+              port: 'TRACE', 
+              snr, 
+              rssi: undefined,
+              isOutbound 
+            };
+            if (existing) {
+              // Avoid duplicate identical entries
+              const alreadyHas = existing.entries.some(e => e.id === entry.id && e.port === 'TRACE' && e.isOutbound === isOutbound);
+              if (alreadyHas) return prev;
+              return prev.map(n => n.byte === relayByte ? { ...n, entries: [...n.entries, entry] } : n);
+            }
+            return [...prev, { byte: relayByte, entries: [entry] }];
+          });
+        }
+      }
+
+      // If block ends or we see a new log header
+      if (!cleanLine.includes("-->") && !cleanLine.includes("<--") && !cleanLine.includes("Route traced:")) {
+        if (tracerouteStateRef.current.requestId) {
+          const myIdNorm = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
+          const formattedLines = tracerouteStateRef.current.lines.map(l => {
+            let processed = l;
+            // Remove log metadata (e.g. "INFO  | 04:03:43 531 [Router] ")
+            processed = processed.replace(/^.*?\[Router\]\s*/i, '');
+            // Replace own ID
+            processed = processed.replace(new RegExp(`0x${myIdNorm}`, 'gi'), 'YOU');
+            // Replace FFFFFFFF
+            processed = processed.replace(/0xffffffff/gi, 'UNKNOWN');
+            // Replace arrows
+            processed = processed.replace(/-->/g, '→').replace(/<--/g, '←');
+            // Replace 0x with ! for other nodes (4 to 8 digits)
+            processed = processed.replace(/0x([a-f0-9]{4,8})/gi, '!$1');
+            return processed;
+          });
+          const fullText = formattedLines.join('\n');
+          const reqId = tracerouteStateRef.current.requestId;
+          setPacketMessages(prev => ({ ...prev, [reqId]: fullText }));
+        }
+        tracerouteStateRef.current.active = false;
+      }
+      
+      // Don't return early for traceroute lines, we want them in the log
+      if (!currentPacketId) {
+        addLog(cleanLine, 'debug');
+        return;
+      }
+    }
 
     if (!currentPacketId) return;
 
@@ -258,13 +387,19 @@ export default function App() {
 
     const myIdNormalized = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
     const myRelayByte = myIdNormalized.slice(-2).padStart(2, '0');
-    const relayByte = relayMatch ? relayMatch[1].toLowerCase().slice(-2).padStart(2, '0') : null;
+    const rawRelayStr = relayMatch ? relayMatch[1].toLowerCase() : null;
+    const relayByte = rawRelayStr ? rawRelayStr.slice(-2).padStart(2, '0') : null;
+
+    // Filter out our own relay byte or truncated versions of it
+    const isOurRelay = rawRelayStr && (
+      relayByte === myRelayByte || 
+      (rawRelayStr.length === 1 && myRelayByte.startsWith(rawRelayStr)) ||
+      rawRelayStr === '0' || rawRelayStr === '00'
+    );
 
     // Always store relay mapping if found, even if not tracked yet
-    if (relayByte && !isError && !isSendingEvent) {
-      if (relayByte !== myRelayByte) {
-        packetMapRef.current[currentPacketId] = relayByte;
-      }
+    if (relayByte && !isError && !isSendingEvent && !isOurRelay) {
+      packetMapRef.current[currentPacketId] = relayByte;
     }
 
     // Clear relay mapping if we see a Lora RX without relay (might be direct or different path)
@@ -273,18 +408,16 @@ export default function App() {
     }
 
     // 2. Detect Source (Our Node) and Start Tracking
-    const isTextTrigger = cleanLine.includes("Received text msg") || 
-                         (cleanLine.includes("PACKET FROM PHONE") && finalPortName === 'TEXT');
-    const isExplicitlyOurs = currentSourceId && (
-      currentSourceId === myIdNormalized || 
-      currentSourceId === '0' || 
-      currentSourceId === '00000000'
-    );
+    const isOurPacketTrigger = cleanLine.includes("Received text msg") || 
+                              cleanLine.includes("Completed sending") ||
+                              (cleanLine.includes("PACKET FROM PHONE") && 
+                               (finalPortName === 'TEXT' || finalPortName === 'NODEINFO' || finalPortName === 'ROUTING' || finalPortName === 'TRACE'));
+    const isExplicitlyOurs = currentSourceId && currentSourceId === myIdNormalized;
     const isSelfAck = currentSourceId && currentDestId && 
                      (currentSourceId === currentDestId) &&
                      (currentSourceId === myIdNormalized);
     
-    const shouldTrack = isTextTrigger && isExplicitlyOurs && !isSelfAck;
+    const shouldTrack = isOurPacketTrigger && isExplicitlyOurs && !isSelfAck;
 
     if (shouldTrack) {
       if (!trackedPacketIdsRef.current.includes(currentPacketId)) {
@@ -296,39 +429,71 @@ export default function App() {
       }
     }
 
-    // 3. Process Relay Events
-    const isTracked = trackedPacketIdsRef.current.includes(currentPacketId);
+    // 3. Process Signal Events (Rebroadcasts or Direct ACKs)
+    const isTracked = trackedPacketIdsRef.current.includes(currentPacketId) || 
+                     (currentRequestId && trackedPacketIdsRef.current.includes(currentRequestId));
     const isToMe = currentDestId && (currentDestId.replace(/^0x/, '') === myIdNormalized);
+    const isDirectAck = cleanLine.includes("Received a ACK") || (isToMe && currentRequestId);
+    const isConclusiveSignal = cleanLine.includes("Rx someone rebroadcasting") || 
+                              cleanLine.includes("Received a ACK") || 
+                              cleanLine.includes("direct response") ||
+                              cleanLine.toLowerCase().includes("rebroadcasting for us");
     const isRebroadcast = (isSomeoneRebroadcasting || (isLoraRx && cleanLine.includes("relay="))) && 
-                         !isSendingEvent && 
-                         hopLimit !== 0 &&
-                         !isToMe;
+                         !isSendingEvent;
+    
+    const isSignalEvent = (isRebroadcast || isDirectAck) && !isSendingEvent;
 
-    if (isRebroadcast) {
-      const relay = packetMapRef.current[currentPacketId] || relayByte;
+    if (isSignalEvent) {
+      let relay = packetMapRef.current[currentPacketId] || relayByte;
       
-      if (relay && relay !== myRelayByte) {
+      // If it's a direct packet to us, the relay is the sender
+      if (isToMe && !relay && currentSourceId) {
+        relay = currentSourceId.slice(-2).padStart(2, '0');
+      }
+
+      // Re-check isOurRelay for the final relay value
+      const isOurRelayFinal = relay && (
+        relay === myRelayByte || 
+        (relay.length === 1 && myRelayByte.startsWith(relay)) ||
+        relay === '0' || relay === '00'
+      );
+
+      if (relay && !isOurRelayFinal) {
+        // Determine which packet ID to associate this signal with
+        const targetPacketId = (isDirectAck && currentRequestId) ? currentRequestId : currentPacketId;
+        const isTargetTracked = targetPacketId ? trackedPacketIdsRef.current.includes(targetPacketId) : false;
+
         // If not tracked yet, but we see a rebroadcast of something from us, track it!
-        if (!isTracked && isExplicitlyOurs && !isSelfAck) {
-          trackedPacketIdsRef.current = [...trackedPacketIdsRef.current, currentPacketId];
+        if (targetPacketId && !isTargetTracked && isExplicitlyOurs && !isSelfAck) {
+          trackedPacketIdsRef.current = [...trackedPacketIdsRef.current, targetPacketId];
           setTrackedPacketIds([...trackedPacketIdsRef.current]);
-          addLog(`[${finalPortName}] Auto-tracking relayed packet ${currentPacketId} from your node.`, 'info');
+          addLog(`[${finalPortName}] Auto-tracking relayed packet ${targetPacketId} from your node.`, 'info');
         }
 
         // Update relay nodes state
-        if (collectAllStatsRef.current || isTracked || trackedPacketIdsRef.current.includes(currentPacketId)) {
-          const newEntry = { id: currentPacketId, port: finalPortName, snr: currentSnr || undefined, rssi: currentRssi || undefined };
+        if (targetPacketId && (collectAllStatsRef.current || trackedPacketIdsRef.current.includes(targetPacketId))) {
+          const cachedSignal = packetSignalRef.current[currentPacketId || ''];
+          const snr = currentSnr || cachedSignal?.snr;
+          const rssi = currentRssi || cachedSignal?.rssi;
+
+          const newEntry = { 
+            id: targetPacketId, 
+            port: portMapRef.current[targetPacketId] || finalPortName, 
+            snr: snr || undefined, 
+            rssi: rssi || undefined,
+            isOutbound: false 
+          };
           setRelayNodes(prev => {
             const existing = prev.find(n => n.byte === relay);
             if (existing) {
-              const alreadyHasId = existing.entries.some(i => i.id === currentPacketId);
+              const alreadyHasId = existing.entries.some(i => i.id === targetPacketId);
               if (alreadyHasId) {
                 return prev.map(n => n.byte === relay ? {
                   ...n,
-                  entries: n.entries.map(e => e.id === currentPacketId ? {
+                  entries: n.entries.map(e => e.id === targetPacketId ? {
                     ...e,
-                    snr: (currentSnr && (!e.snr || currentSnr.length >= e.snr.length)) ? currentSnr : e.snr,
-                    rssi: (currentRssi && (!e.rssi || currentRssi.length >= e.rssi.length)) ? currentRssi : e.rssi
+                    snr: (snr && (!e.snr || snr.length >= e.snr.length)) ? snr : e.snr,
+                    rssi: (rssi && (!e.rssi || rssi.length >= e.rssi.length)) ? rssi : e.rssi
                   } : e)
                 } : n);
               }
@@ -336,10 +501,24 @@ export default function App() {
             }
             return [...prev, { byte: relay, entries: [newEntry] }];
           });
-        }
 
-        if (isSomeoneRebroadcasting) {
-          addLog(`[${finalPortName}] SUCCESS! Relay detected. Byte: 0x${relay} for packet ${currentPacketId}`, 'success');
+          // Log only once per packet/relay combination to avoid spam
+          // ONLY log if it's a tracked packet (our packet) AND it's a conclusive line
+          if (isConclusiveSignal && trackedPacketIdsRef.current.includes(targetPacketId)) {
+            const logKey = `${targetPacketId}-${relay}-${isDirectAck ? 'direct' : 'relay'}`;
+            if (!seenSignalLogsRef.current.has(logKey)) {
+              seenSignalLogsRef.current.add(logKey);
+              const displayPort = portMapRef.current[targetPacketId] || finalPortName;
+              const displayPacketId = targetPacketId;
+              const displayRelay = `0x${relay}`;
+              
+              if (isRebroadcast) {
+                summaryLogsToAdd.push({ text: `[${displayPort}] Relay detected: ${displayRelay} for packet ${displayPacketId}`, type: 'success' });
+              } else if (isDirectAck) {
+                summaryLogsToAdd.push({ text: `[${displayPort}] Direct response: ${displayRelay} for packet ${displayPacketId}`, type: 'success' });
+              }
+            }
+          }
         }
       }
     }
@@ -348,6 +527,8 @@ export default function App() {
     if (trackedPacketIdsRef.current.includes(currentPacketId) && !isSelfAck) {
       if (filterTelemetryRef.current && (finalPortName === 'TELE' || finalPortName === 'POS')) return;
       addLog(cleanLine, 'serial');
+      // Add summary logs AFTER the raw log
+      summaryLogsToAdd.forEach(l => addLog(l.text, l.type));
     }
 
   };
@@ -366,6 +547,10 @@ export default function App() {
   const renderHighlightedLog = (text: string, id: number) => {
     const myLastByte = myNodeId.slice(-2).toLowerCase().padStart(2, '0');
     
+    // Replace 0x with ! for Node IDs (4-8 hex digits) before highlighting
+    // This ensures consistency across the app as requested.
+    let processedText = text.replace(/0x([a-f0-9]{4,8})/gi, '!$1');
+    
     const patterns = [
       { regex: /msg\s*=\s*.*?(?=\s\w+=|$)/gi, style: 'bg-blue-500/20 text-blue-300 px-1 rounded' },
       { 
@@ -379,10 +564,17 @@ export default function App() {
           return 'bg-green-500/30 text-green-400 font-bold px-1 rounded border border-green-500/20 animate-pulse';
         }
       },
-      { regex: /someone rebroadcasting for us/gi, style: 'bg-green-500/30 text-green-400 font-bold px-1 rounded' }
+      { regex: /someone rebroadcasting for us/gi, style: 'bg-green-500/30 text-green-400 font-bold px-1 rounded' },
+      { 
+        regex: /\bTRACE\b|TRACEROUTE/gi, 
+        getStyle: (match: string) => {
+          return 'bg-blue-600/30 text-blue-400 font-bold px-1 rounded border border-blue-500/20 cursor-help';
+        },
+        hasTooltip: true
+      }
     ];
 
-    let parts: (string | React.ReactNode)[] = [text];
+    let parts: (string | React.ReactNode)[] = [processedText];
 
     patterns.forEach((pattern) => {
       const { regex } = pattern;
@@ -393,21 +585,47 @@ export default function App() {
           newParts.push(part);
           return;
         }
-        
-        const matches = part.match(regex);
-        if (!matches) {
-          newParts.push(part);
-          return;
-        }
 
-        const splitParts = part.split(regex);
-        splitParts.forEach((splitPart, i) => {
-          if (splitPart !== "") newParts.push(splitPart);
-          if (i < splitParts.length - 1 && matches[i]) {
-            const style = 'style' in pattern ? pattern.style : pattern.getStyle(matches[i]);
-            newParts.push(<span key={`${id}-${regex.source}-${i}`} className={style}>{matches[i]}</span>);
+        const matches = [...part.matchAll(regex)];
+        let lastIndex = 0;
+
+        matches.forEach((match, idx) => {
+          if (match.index === undefined) return;
+          
+          newParts.push(part.substring(lastIndex, match.index));
+          
+          const style = pattern.getStyle ? pattern.getStyle(match[0]) : pattern.style;
+          
+          if (pattern.hasTooltip) {
+            // Find packet ID or request ID in this log line to show content
+            const idMatch = text.match(/id\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
+            const reqIdMatch = text.match(/requestId=(0x[a-f0-9]+|[a-f0-9]{8,})/i);
+            const pktId = idMatch ? idMatch[1].toLowerCase().replace(/^0x/, '') : 
+                         (reqIdMatch ? reqIdMatch[1].toLowerCase().replace(/^0x/, '') : null);
+            
+            const reqId = pktId ? (requestMap[pktId] || pktId) : null;
+            const content = reqId ? packetMessages[reqId] : null;
+
+            newParts.push(
+              <span key={`${id}-${idx}`} className="relative group/trace inline-block">
+                <span className={style}>{match[0]}</span>
+                {content && (
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-2xl z-[100] text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm opacity-0 group-hover/trace:opacity-100 transition-opacity pointer-events-none whitespace-pre-wrap">
+                    <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Trace Details</p>
+                    {content}
+                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-[#1c212c] border-r border-b border-blue-500/50 rotate-45" />
+                  </div>
+                )}
+              </span>
+            );
+          } else {
+            newParts.push(<span key={`${id}-${idx}`} className={style}>{match[0]}</span>);
           }
+          
+          lastIndex = match.index + match[0].length;
         });
+
+        newParts.push(part.substring(lastIndex));
       });
       parts = newParts;
     });
@@ -456,14 +674,18 @@ export default function App() {
               </div>
 
               <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-xs normal-case font-medium leading-relaxed text-gray-300">
-                <p className="font-bold text-orange-400 mb-1 uppercase tracking-wider">Node Tracking Mode</p>
-                <p className="mb-2">Enter your Node ID to track your own messages in the terminal.</p>
-                <p><span className="text-orange-400 font-bold">COLLECT ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours.</p>
+                <p className="font-bold text-orange-400 mb-2 uppercase tracking-wider border-b border-orange-500/20 pb-1">Node Tracking Mode</p>
+                <p className="mb-3">Enter your Node ID to track your own messages in the terminal.</p>
+                <div className="pt-2 border-t border-app-border/50">
+                  <p>
+                    <span className="text-orange-400 font-semibold">COLLECT ALL:</span> When ON, signal stats for ALL rebroadcasts on the mesh will be added to the side panel, even if they aren't yours. This is useful for antenna adjusting.
+                  </p>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-xs font-bold group relative cursor-help">
-              <span className="text-gray-500 uppercase">Filter Noise</span>
+              <span className="text-gray-500 uppercase">Filter System</span>
               <button 
                 onClick={() => setFilterTelemetry(!filterTelemetry)}
                 className={`w-8 h-4 rounded-full transition-all relative ${filterTelemetry ? 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.4)]' : 'bg-gray-600'}`}
@@ -471,7 +693,7 @@ export default function App() {
                 <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${filterTelemetry ? 'left-4.5' : 'left-0.5'}`} />
               </button>
               <div className="absolute top-full left-0 mt-2 w-56 p-3 bg-app-surface border border-app-border rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-xs normal-case font-medium leading-relaxed text-gray-300">
-                <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider">Noise Filter</p>
+                <p className="font-bold text-blue-400 mb-1 uppercase tracking-wider">System Filter</p>
                 When ON, it hides background traffic like position updates and telemetry, showing only your messages and their relays.
               </div>
             </div>
@@ -479,9 +701,29 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-2 text-xs font-bold text-gray-500">
-            <div className={`w-2 h-2 rounded-full ${isReceiving ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-            {isConnected ? (isReceiving ? 'RECEIVING DATA' : 'CONNECTED') : 'OFFLINE'}
+          {/* Stats and Clear Button */}
+          <div className="hidden lg:flex items-center gap-5 border-r border-app-border pr-5 mr-1">
+            <div className="flex flex-col items-center">
+              <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest leading-none mb-1">Tracked</span>
+              <span className="text-sm font-mono font-bold text-blue-400 leading-none">{trackedPacketIds.length}</span>
+            </div>
+            <div className="flex flex-col items-center">
+              <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest leading-none mb-1">Logs</span>
+              <span className="text-sm font-mono font-bold text-gray-400 leading-none">{logs.length}</span>
+            </div>
+            <button 
+              onClick={clearAll}
+              className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-black transition-all uppercase tracking-widest"
+            >
+              <Trash2 size={12} /> Clear
+            </button>
+          </div>
+
+          <div className="hidden md:flex items-center gap-2 text-[10px] font-black text-gray-500 w-32 shrink-0">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${isReceiving ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
+            <span className="truncate">
+              {isConnected ? (isReceiving ? 'RECEIVING DATA' : 'CONNECTED') : 'OFFLINE'}
+            </span>
           </div>
           
           <div className="flex gap-2">
@@ -506,7 +748,7 @@ export default function App() {
 
       <main className="flex-1 flex overflow-hidden">
         {/* Left Status Panel */}
-        <aside className="w-72 bg-app-surface border-r border-app-border flex flex-col shrink-0 overflow-hidden">
+        <aside className="w-72 bg-app-surface border-r border-app-border flex flex-col shrink-0">
           <div className="p-4 border-b border-app-border">
             <div className="flex bg-app-bg p-1 rounded-lg border border-app-border">
               <button 
@@ -525,7 +767,7 @@ export default function App() {
           </div>
 
           <div 
-            className="flex-1 overflow-y-auto p-4 space-y-4" 
+            className="flex-1 overflow-y-auto p-4 pt-16 space-y-4" 
             ref={relayListRef}
             onScroll={handleRelayScroll}
           >
@@ -537,7 +779,7 @@ export default function App() {
                       initial={{ x: -10, opacity: 0 }}
                       animate={{ x: 0, opacity: 1 }}
                       key={node.byte} 
-                      className="bg-app-surface border border-app-border rounded overflow-hidden shadow-sm"
+                      className="bg-app-surface border border-app-border rounded shadow-sm"
                     >
                       <div className="bg-app-surface/50 px-3 py-1.5 flex justify-between items-center border-b border-app-border">
                         <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Relay Byte</span>
@@ -550,34 +792,58 @@ export default function App() {
                           <span className="text-[10px] text-gray-600 font-black uppercase">RSSI</span>
                           <span className="text-[10px] text-gray-600 font-black uppercase text-right">Packet</span>
                         </div>
-                        <div className="space-y-1.5">
-                          {node.entries.map((entry, idx) => (
-                            <div key={idx} className="grid grid-cols-3 gap-2 px-1 items-center hover:bg-white/5 rounded transition-colors py-0.5">
-                              <span className={`text-xs font-mono font-bold ${getSnrColor(entry.snr)}`}>
-                                {entry.snr ? `${entry.snr} dB` : '—'}
-                              </span>
-                              <span className={`text-xs font-mono font-bold ${getRssiColor(entry.rssi)}`}>
-                                {entry.rssi ? `${entry.rssi} dBm` : '—'}
-                              </span>
-                              <div className="relative group/packet flex justify-end">
-                                <span className={`font-mono text-xs text-right truncate ${trackedPacketIds.includes(entry.id) && packetMessages[entry.id] ? 'cursor-help' : ''} ${trackedPacketIds.includes(entry.id) ? 'text-blue-400' : 'text-gray-500'}`}>
-                                  {entry.id}
-                                </span>
-                                {trackedPacketIds.includes(entry.id) && packetMessages[entry.id] && (
-                                  <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-50 text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
-                                    <div className="relative z-10">
-                                      <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Message Content</p>
-                                      <div className="italic text-gray-300">
-                                        "{packetMessages[entry.id]}"
+                        <div className="space-y-0.5">
+                          {(() => {
+                            const groups: {id: string, items: typeof node.entries}[] = [];
+                            node.entries.forEach(entry => {
+                              const last = groups[groups.length - 1];
+                              if (last && last.id === entry.id) {
+                                last.items.push(entry);
+                              } else {
+                                groups.push({ id: entry.id, items: [entry] });
+                              }
+                            });
+
+                            return groups.map((group, gIdx) => (
+                              <div key={gIdx} className={`space-y-0 ${gIdx > 0 ? 'pt-0.5 border-t border-app-border/20' : ''}`}>
+                                  {group.items.map((entry, idx) => (
+                                    <div key={idx} className="grid grid-cols-3 gap-2 px-1 items-center hover:bg-white/5 rounded transition-colors py-0.5">
+                                      <div className={`text-xs font-mono font-bold flex items-center gap-1 ${getSnrColor(entry.snr)}`}>
+                                        <span className="whitespace-nowrap">
+                                          {entry.snr ? `${entry.snr} dB` : '—'}
+                                        </span>
+                                        <span className="text-[10px] opacity-70">
+                                          {group.items.length > 1 ? (
+                                            (entry as any).isOutbound ? '↑' : '↓'
+                                          ) : (
+                                            (entry as any).isOutbound ? '↑' : ''
+                                          )}
+                                        </span>
                                       </div>
+                                      <span className={`text-xs font-mono font-bold ${getRssiColor(entry.rssi)}`}>
+                                        {entry.rssi ? `${entry.rssi} dBm` : '—'}
+                                      </span>
+                                    <div className="relative group/packet flex justify-end">
+                                      <span className={`font-mono text-xs text-right truncate ${trackedPacketIds.includes(entry.id) && packetMessages[entry.id] ? 'cursor-help' : ''} ${trackedPacketIds.includes(entry.id) ? 'text-blue-400' : 'text-gray-500'}`}>
+                                        {idx === 0 ? entry.id : ''}
+                                      </span>
+                                      {idx === 0 && trackedPacketIds.includes(entry.id) && packetMessages[entry.id] && (
+                                        <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-[100] text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
+                                          <div className="relative z-10">
+                                            <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Message Content</p>
+                                            <div className="italic text-gray-300">
+                                              "{packetMessages[entry.id]}"
+                                            </div>
+                                          </div>
+                                          <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-[#1c212c] border-r border-b border-blue-500/50 rotate-45 z-0" />
+                                        </div>
+                                      )}
                                     </div>
-                                    {/* Arrow/Tail */}
-                                    <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-[#1c212c] border-r border-b border-blue-500/50 rotate-45 z-0" />
                                   </div>
-                                )}
+                                ))}
                               </div>
-                            </div>
-                          ))}
+                            ));
+                          })()}
                         </div>
                       </div>
                     </motion.div>
@@ -590,34 +856,34 @@ export default function App() {
                 ) : (
                   // By Packet View
                   (() => {
-                    const displayPacketIds = allSeenPacketIds.filter(id => 
-                      trackedPacketIds.includes(id) || 
-                      (collectAllStats && relayNodes.some(n => n.entries.some(e => e.id === id)))
-                    );
-                    
-                    return displayPacketIds.length > 0 ? displayPacketIds.map(packetId => {
-                      const relaysForThisPacket = relayNodes.flatMap(n => 
-                        n.entries
-                          .filter(e => e.id === packetId)
-                          .map(e => ({ byte: n.byte, snr: e.snr, rssi: e.rssi }))
+                      const displayPacketIds = allSeenPacketIds.filter(id => 
+                        trackedPacketIds.includes(id) || 
+                        (collectAllStats && relayNodes.some(n => n.entries.some(e => e.id === id)))
                       );
-                      const isOurs = trackedPacketIds.includes(packetId);
+                      
+                      return displayPacketIds.length > 0 ? displayPacketIds.map(packetId => {
+                        const relaysForThisPacket = relayNodes.flatMap(n => 
+                          n.entries
+                            .filter(e => e.id === packetId)
+                            .map(e => ({ byte: n.byte, snr: e.snr, rssi: e.rssi, isOutbound: (e as any).isOutbound }))
+                        );
+                        const isOurs = trackedPacketIds.includes(packetId);
                       
                       return (
                         <motion.div 
                           initial={{ x: -10, opacity: 0 }}
                           animate={{ x: 0, opacity: 1 }}
                           key={packetId} 
-                          className="bg-app-surface border border-app-border p-3 rounded flex flex-col gap-2 shadow-sm"
+                          className="bg-app-surface border border-app-border p-2 rounded flex flex-col gap-1 shadow-sm"
                         >
-                          <div className="flex justify-between items-center border-b border-app-border pb-1.5">
+                          <div className="flex justify-between items-center border-b border-app-border pb-1">
                             <span className="text-[10px] text-gray-500 font-bold uppercase">Packet</span>
                             <div className="relative group/packet flex justify-end">
                               <span className={`font-mono text-[11px] ${isOurs && packetMessages[packetId] ? 'cursor-help' : ''} ${isOurs ? 'text-blue-400' : 'text-gray-500'}`}>
                                 {packetId}
                               </span>
                               {isOurs && packetMessages[packetId] && (
-                                <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-50 text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
+                                <div className="absolute bottom-full right-0 mb-3 w-56 p-3 bg-[#1c212c] border border-blue-500/50 rounded-lg shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)] opacity-0 group-hover/packet:opacity-100 transition-all duration-200 pointer-events-none z-[100] text-[11px] normal-case font-medium leading-relaxed text-blue-50/90 backdrop-blur-sm">
                                   <div className="relative z-10">
                                     <p className="font-bold text-blue-400 mb-1.5 uppercase tracking-wider text-[9px] border-b border-blue-500/20 pb-1">Message Content</p>
                                     <div className="italic text-gray-300">
@@ -636,9 +902,20 @@ export default function App() {
                                 <span className="text-orange-400 font-mono font-bold text-center border-b border-orange-500/20 pb-1 mb-1">
                                   0x{r.byte}
                                 </span>
-                                <div className="flex justify-between text-[10px] font-mono">
+                                <div className="flex justify-between items-center text-[10px] font-mono">
                                   <span className="text-gray-500">SNR</span>
-                                  <span className={getSnrColor(r.snr)}>{r.snr ? `${r.snr} dB` : '?'}</span>
+                                  <div className={`flex items-center gap-0.5 ${getSnrColor(r.snr)}`}>
+                                    <span className="whitespace-nowrap">
+                                      {r.snr ? `${r.snr} dB` : '?'}
+                                    </span>
+                                    <span className="text-[9px] opacity-70">
+                                      {relaysForThisPacket.filter(rp => rp.byte === r.byte).length > 1 ? (
+                                        r.isOutbound ? '↑' : '↓'
+                                      ) : (
+                                        r.isOutbound ? '↑' : ''
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
                                 <div className="flex justify-between text-[10px] font-mono">
                                   <span className="text-gray-500">RSSI</span>
@@ -663,31 +940,13 @@ export default function App() {
             </section>
           </div>
 
-          <section className="mt-auto p-3 border-t border-app-border space-y-2">
-            <div className="flex justify-center gap-4 items-center text-xs font-bold text-gray-500 uppercase">
-              <div className="flex gap-1">
-                <span>Tracked</span>
-                <span className="text-blue-400">{trackedPacketIds.length}</span>
-              </div>
-              <div className="w-px h-2.5 bg-app-border" />
-              <div className="flex gap-1">
-                <span>Logs</span>
-                <span className="text-gray-400">{logs.length}</span>
-              </div>
-            </div>
-            <button 
-              onClick={clearAll}
-              className="w-full flex items-center justify-center gap-2 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-xs font-bold transition-all uppercase shadow-sm"
-            >
-              <Trash2 size={12} /> Clear Session
-            </button>
-
-            <div className="pt-1 text-center">
+          <section className="mt-auto p-3 border-t border-app-border">
+            <div className="text-center">
               <a 
                 href="https://le-francais.ru" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-xs font-medium text-gray-400 hover:text-blue-400 transition-colors flex items-center justify-center gap-1.5"
+                className="text-sm font-medium text-gray-400 hover:text-blue-400 transition-colors flex items-center justify-center gap-1.5"
               >
                 <span>Powered by</span>
                 <svg 
@@ -717,7 +976,11 @@ export default function App() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 font-mono text-[12px] leading-relaxed scrollbar-thin">
+          <div 
+            ref={logsContainerRef}
+            onScroll={handleLogScroll}
+            className="flex-1 overflow-y-auto p-6 font-mono text-[12px] leading-relaxed scrollbar-thin"
+          >
             {logs.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center opacity-20 text-center grayscale">
                 <Terminal size={48} className="mb-4" />
