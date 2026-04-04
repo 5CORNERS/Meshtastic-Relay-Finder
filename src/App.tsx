@@ -55,10 +55,15 @@ export default function App() {
 
   const PORTNUM_MAP: Record<string, string> = {
     '1': 'TEXT',
+    '2': 'REMOTE',
     '3': 'POS',
-    '67': 'TELE',
     '4': 'NODEINFO',
     '5': 'ROUTING',
+    '6': 'ADMIN',
+    '67': 'TELE',
+    '70': 'TRACE',
+    '71': 'WAYPOINT',
+    '72': 'AUDIO',
   };
 
   // Persistence for Node ID
@@ -227,11 +232,11 @@ export default function App() {
     lastDataTime.current = Date.now();
     const cleanLine = line.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
     
-    const idMatch = cleanLine.match(/id\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
-    const frMatch = cleanLine.match(/(?:fr|from)\s*=\s*(0x[a-f0-9]+|[a-f0-9]+)/i);
-    const toMatch = cleanLine.match(/to\s*=\s*(0x[a-f0-9]+|[a-f0-9]{8,})/i);
+    const idMatch = cleanLine.match(/id\s*=\s*(?:0x|!|)([a-f0-9]{8,})/i);
+    const frMatch = cleanLine.match(/(?:fr|from)\s*=\s*(?:0x|!|)([a-f0-9]+)/i);
+    const toMatch = cleanLine.match(/to\s*=\s*(?:0x|!|)([a-f0-9]{8,})/i);
     const relayMatch = cleanLine.match(/relay\s*=\s*0x([a-f0-9]+)/i);
-    const reqIdMatch = cleanLine.match(/requestId=(0x[a-f0-9]+|[a-f0-9]{8,})/i);
+    const reqIdMatch = cleanLine.match(/requestId=(?:0x|!|)([a-f0-9]{8,})/i);
     const portMatch = cleanLine.match(/Portnum=(\d+)/i);
     const hopLimitMatch = cleanLine.match(/HopLim=(\d+)/i);
 
@@ -249,7 +254,11 @@ export default function App() {
     let currentSnr = snrMatch ? snrMatch[1] : null;
     if (currentSnr === "-1") currentSnr = "-1?";
     const currentRssi = rssiMatch ? rssiMatch[1] : null;
-    const currentRequestId = reqIdMatch ? reqIdMatch[1].toLowerCase().replace(/^0x/, '') : null;
+    const currentRequestId = reqIdMatch ? reqIdMatch[1].toLowerCase() : null;
+
+    if (currentPacketId && portName !== 'UNKNOWN') {
+      portMapRef.current[currentPacketId] = portName;
+    }
 
     if (currentPacketId && (currentSnr || currentRssi)) {
       packetSignalRef.current[currentPacketId] = {
@@ -263,15 +272,25 @@ export default function App() {
       setRequestMap(prev => ({ ...prev, [currentPacketId!]: currentRequestId }));
     }
 
+    if (currentPacketId) {
+      if (msgMatch) {
+        setPacketMessages(prev => ({ ...prev, [currentPacketId]: msgMatch[1].trim() }));
+      } else if (portName === 'NODEINFO' && !packetMessages[currentPacketId]) {
+        // Fallback for Node Info requests that don't have a explicit msg= string
+        setPacketMessages(prev => ({ ...prev, [currentPacketId]: "Requesting Node Info" }));
+      }
+    }
+
     const summaryLogsToAdd: {text: string, type: LogEntry['type']}[] = [];
 
     // Traceroute block parsing
     if (cleanLine.includes("Route traced:")) {
       const reqId = lastTracerouteRequestIdRef.current;
+      const hopPart = cleanLine.split("Route traced:")[1]?.trim();
       tracerouteStateRef.current = { 
         active: true, 
         requestId: reqId, 
-        lines: [cleanLine.trim()] 
+        lines: (hopPart && (hopPart.includes("-->") || hopPart.includes("<--"))) ? [hopPart] : []
       };
       // Ensure we track the traceroute packet
       if (reqId && !trackedPacketIdsRef.current.includes(reqId)) {
@@ -545,11 +564,23 @@ export default function App() {
   };
 
   const renderHighlightedLog = (text: string, id: number) => {
-    const myLastByte = myNodeId.slice(-2).toLowerCase().padStart(2, '0');
+    const myIdNorm = myNodeId.toLowerCase().replace(/^(!|0x)/, '');
+    const myLastByte = myIdNorm.slice(-2).padStart(2, '0');
     
     // Replace 0x with ! for Node IDs (4-8 hex digits) before highlighting
     // This ensures consistency across the app as requested.
-    let processedText = text.replace(/0x([a-f0-9]{4,8})/gi, '!$1');
+    // We only replace if it's fr=, to=, from=, dest=, or in traceroute context.
+    // We explicitly avoid id= and requestId= to keep packet IDs as they are.
+    let processedText = text.replace(/((?:fr|to|from|dest|node|nodeid|user)\s*=\s*)0x([a-f0-9]{4,8})/gi, (match, prefix, hex) => {
+      if (hex === '00000000') return match; // Keep zero ID as 0x
+      return `${prefix}!${hex}`;
+    });
+    
+    // Also handle standalone ones in traceroute (they usually look like 0x9e7620e0 →)
+    processedText = processedText.replace(/0x([a-f0-9]{4,8})(?=\s*(?:→|←|--|>|<))/gi, (match, hex) => {
+      if (hex === '00000000') return match;
+      return `!${hex}`;
+    });
     
     const patterns = [
       { regex: /msg\s*=\s*.*?(?=\s\w+=|$)/gi, style: 'bg-blue-500/20 text-blue-300 px-1 rounded' },
@@ -558,7 +589,13 @@ export default function App() {
         getStyle: (match: string) => {
           const hexPart = match.split('0x')[1]?.toLowerCase() || '';
           const byte = hexPart.slice(-2).padStart(2, '0');
-          if (byte === myLastByte) {
+          
+          // Check if it's our relay byte, including truncated versions (e.g. 0xe for 0xe0)
+          const isOurRelay = byte === myLastByte || 
+                            (hexPart.length === 1 && myLastByte.startsWith(hexPart)) ||
+                            hexPart === '0' || hexPart === '00';
+
+          if (isOurRelay) {
             return 'bg-orange-500/30 text-orange-400 font-bold px-1 rounded border border-orange-500/20';
           }
           return 'bg-green-500/30 text-green-400 font-bold px-1 rounded border border-green-500/20 animate-pulse';
@@ -664,7 +701,7 @@ export default function App() {
               <div className="h-4 w-px bg-app-border mx-1" />
               
               <div className="flex items-center gap-2 px-2 py-0.5 cursor-help">
-                <span className="text-[11px] text-gray-500 font-bold uppercase">Collect All</span>
+                <span className="text-[11px] text-gray-500 font-bold uppercase tracking-wider">Collect All</span>
                 <button 
                   onClick={() => setCollectAllStats(!collectAllStats)}
                   className={`w-7 h-3.5 rounded-full transition-all relative ${collectAllStats ? 'bg-orange-600 shadow-[0_0_8px_rgba(234,88,12,0.4)]' : 'bg-gray-600'}`}
@@ -684,8 +721,8 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-xs font-bold group relative cursor-help">
-              <span className="text-gray-500 uppercase">Filter System</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-app-bg border border-app-border rounded text-[11px] font-bold group relative cursor-help">
+              <span className="text-gray-500 uppercase tracking-wider">Filter System</span>
               <button 
                 onClick={() => setFilterTelemetry(!filterTelemetry)}
                 className={`w-8 h-4 rounded-full transition-all relative ${filterTelemetry ? 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.4)]' : 'bg-gray-600'}`}
@@ -704,16 +741,16 @@ export default function App() {
           {/* Stats and Clear Button */}
           <div className="hidden lg:flex items-center gap-5 border-r border-app-border pr-5 mr-1">
             <div className="flex flex-col items-center">
-              <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest leading-none mb-1">Tracked</span>
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider leading-none mb-1">Tracked</span>
               <span className="text-sm font-mono font-bold text-blue-400 leading-none">{trackedPacketIds.length}</span>
             </div>
             <div className="flex flex-col items-center">
-              <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest leading-none mb-1">Logs</span>
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider leading-none mb-1">Logs</span>
               <span className="text-sm font-mono font-bold text-gray-400 leading-none">{logs.length}</span>
             </div>
             <button 
               onClick={clearAll}
-              className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-cyan-500/10 hover:border-cyan-500/30 rounded text-[10px] font-black transition-all uppercase tracking-widest"
+              className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/5 hover:bg-orange-500/10 text-orange-400 hover:text-orange-300 border border-orange-500/10 hover:border-orange-500/30 rounded text-[11px] font-bold transition-all uppercase tracking-wider"
             >
               <Trash2 size={12} /> Clear
             </button>
@@ -730,14 +767,14 @@ export default function App() {
             {!isConnected ? (
               <button 
                 onClick={connect} 
-                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-xs transition-all shadow-sm"
+                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-[11px] uppercase tracking-wider transition-all shadow-sm"
               >
                 <Usb size={14} /> Connect
               </button>
             ) : (
               <button 
                 onClick={disconnect} 
-                className="flex items-center gap-2 px-4 py-1.5 border border-app-border hover:bg-app-surface text-gray-300 rounded font-bold text-xs transition-all"
+                className="flex items-center gap-2 px-4 py-1.5 border border-app-border hover:bg-app-surface text-gray-300 rounded font-bold text-[11px] uppercase tracking-wider transition-all"
               >
                 <RefreshCw size={14} className={isReceiving ? "animate-spin" : ""} /> Disconnect
               </button>
@@ -753,13 +790,13 @@ export default function App() {
             <div className="flex bg-app-bg p-1 rounded-lg border border-app-border">
               <button 
                 onClick={() => setRelayViewMode('by-node')}
-                className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded transition-all ${relayViewMode === 'by-node' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded transition-all ${relayViewMode === 'by-node' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
               >
                 By Nodes
               </button>
               <button 
                 onClick={() => setRelayViewMode('by-packet')}
-                className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded transition-all ${relayViewMode === 'by-packet' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded transition-all ${relayViewMode === 'by-packet' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
               >
                 By Packets
               </button>
@@ -767,7 +804,7 @@ export default function App() {
           </div>
 
           <div 
-            className="flex-1 overflow-y-auto p-4 pt-16 space-y-4" 
+            className="flex-1 overflow-y-auto p-4 space-y-4" 
             ref={relayListRef}
             onScroll={handleRelayScroll}
           >
@@ -782,15 +819,15 @@ export default function App() {
                       className="bg-app-surface border border-app-border rounded shadow-sm"
                     >
                       <div className="bg-app-surface/50 px-3 py-1.5 flex justify-between items-center border-b border-app-border">
-                        <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Relay Byte</span>
+                        <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Relay Byte</span>
                         <span className="text-orange-400 font-mono font-bold text-sm">0x{node.byte}</span>
                       </div>
                       
                       <div className="p-2">
                         <div className="grid grid-cols-3 gap-2 mb-1.5 px-1 border-b border-app-border pb-1">
-                          <span className="text-[10px] text-gray-600 font-black uppercase">SNR</span>
-                          <span className="text-[10px] text-gray-600 font-black uppercase">RSSI</span>
-                          <span className="text-[10px] text-gray-600 font-black uppercase text-right">Packet</span>
+                          <span className="text-[11px] text-gray-600 font-bold uppercase tracking-wider">SNR</span>
+                          <span className="text-[11px] text-gray-600 font-bold uppercase tracking-wider">RSSI</span>
+                          <span className="text-[11px] text-gray-600 font-bold uppercase tracking-wider text-right">Packet</span>
                         </div>
                         <div className="space-y-0.5">
                           {(() => {
@@ -877,7 +914,7 @@ export default function App() {
                           className="bg-app-surface border border-app-border p-2 rounded flex flex-col gap-1 shadow-sm"
                         >
                           <div className="flex justify-between items-center border-b border-app-border pb-1">
-                            <span className="text-[10px] text-gray-500 font-bold uppercase">Packet</span>
+                            <span className="text-[11px] text-gray-500 font-bold uppercase tracking-wider">Packet</span>
                             <div className="relative group/packet flex justify-end">
                               <span className={`font-mono text-[11px] ${isOurs && packetMessages[packetId] ? 'cursor-help' : ''} ${isOurs ? 'text-blue-400' : 'text-gray-500'}`}>
                                 {packetId}
@@ -903,7 +940,7 @@ export default function App() {
                                   0x{r.byte}
                                 </span>
                                 <div className="flex justify-between items-center text-[10px] font-mono">
-                                  <span className="text-gray-500">SNR</span>
+                                  <span className="text-gray-500 uppercase tracking-wider font-bold text-[9px]">SNR</span>
                                   <div className={`flex items-center gap-0.5 ${getSnrColor(r.snr)}`}>
                                     <span className="whitespace-nowrap">
                                       {r.snr ? `${r.snr} dB` : '?'}
@@ -918,7 +955,7 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="flex justify-between text-[10px] font-mono">
-                                  <span className="text-gray-500">RSSI</span>
+                                  <span className="text-gray-500 uppercase tracking-wider font-bold text-[9px]">RSSI</span>
                                   <span className={getRssiColor(r.rssi)}>{r.rssi ? `${r.rssi} dBm` : '?'}</span>
                                 </div>
                               </div>
@@ -951,7 +988,7 @@ export default function App() {
                 <span>Powered by</span>
                 <svg 
                   viewBox="0 0 467.32 329.23" 
-                  className="h-4 w-auto inline-block"
+                  className="h-4 w-auto inline-block relative -top-[2px] left-[2px]"
                   fill="#ed1c24"
                 >
                   <path 
@@ -970,7 +1007,7 @@ export default function App() {
           <div className="absolute top-4 right-6 z-10">
             <button 
               onClick={() => setAutoScroll(!autoScroll)}
-              className={`px-3 py-1 rounded text-[9px] font-black tracking-widest transition-all border ${autoScroll ? 'bg-blue-600/20 text-blue-400 border-blue-500/50' : 'bg-app-border text-gray-500 border-app-border'}`}
+              className={`px-3 py-1 rounded text-[11px] font-bold uppercase tracking-wider transition-all border ${autoScroll ? 'bg-blue-600/20 text-blue-400 border-blue-500/50' : 'bg-app-border text-gray-500 border-app-border'}`}
             >
               {autoScroll ? 'AUTO-SCROLL: ON' : 'AUTO-SCROLL: OFF'}
             </button>
