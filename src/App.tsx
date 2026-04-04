@@ -321,23 +321,27 @@ export default function App() {
           const targetNode = from === myIdNorm ? to : from;
           const relayByte = targetNode.slice(-2).padStart(2, '0');
           
-          setRelayNodes(prev => {
-            const existing = prev.find(n => n.byte === relayByte);
-            const entry = { 
-              id: tracerouteStateRef.current.requestId || 'TRACEROUTE', 
-              port: 'TRACE', 
-              snr, 
-              rssi: undefined,
-              isOutbound 
-            };
-            if (existing) {
-              // Avoid duplicate identical entries
-              const alreadyHas = existing.entries.some(e => e.id === entry.id && e.port === 'TRACE' && e.isOutbound === isOutbound);
-              if (alreadyHas) return prev;
-              return prev.map(n => n.byte === relayByte ? { ...n, entries: [...n.entries, entry] } : n);
-            }
-            return [...prev, { byte: relayByte, entries: [entry] }];
-          });
+          const isTracked = tracerouteStateRef.current.requestId && trackedPacketIdsRef.current.includes(tracerouteStateRef.current.requestId);
+
+          if (collectAllStatsRef.current || isTracked) {
+            setRelayNodes(prev => {
+              const existing = prev.find(n => n.byte === relayByte);
+              const entry = { 
+                id: tracerouteStateRef.current.requestId || 'TRACEROUTE', 
+                port: 'TRACE', 
+                snr, 
+                rssi: undefined,
+                isOutbound 
+              };
+              if (existing) {
+                // Avoid duplicate identical entries
+                const alreadyHas = existing.entries.some(e => e.id === entry.id && e.port === 'TRACE' && e.isOutbound === isOutbound);
+                if (alreadyHas) return prev;
+                return prev.map(n => n.byte === relayByte ? { ...n, entries: [...n.entries, entry] } : n);
+              }
+              return [...prev, { byte: relayByte, entries: [entry] }];
+            });
+          }
         }
       }
 
@@ -366,9 +370,12 @@ export default function App() {
         tracerouteStateRef.current.active = false;
       }
       
-      // Don't return early for traceroute lines, we want them in the log
+      // Only log traceroute lines if the request is tracked
       if (!currentPacketId) {
-        addLog(cleanLine, 'debug');
+        const isTracked = tracerouteStateRef.current.requestId && trackedPacketIdsRef.current.includes(tracerouteStateRef.current.requestId);
+        if (isTracked) {
+          addLog(cleanLine, 'serial');
+        }
         return;
       }
     }
@@ -489,19 +496,22 @@ export default function App() {
           addLog(`[${finalPortName}] Auto-tracking relayed packet ${targetPacketId} from your node.`, 'info');
         }
 
-        // Update relay nodes state
-        if (targetPacketId && (collectAllStatsRef.current || trackedPacketIdsRef.current.includes(targetPacketId))) {
-          const cachedSignal = packetSignalRef.current[currentPacketId || ''];
-          const snr = currentSnr || cachedSignal?.snr;
-          const rssi = currentRssi || cachedSignal?.rssi;
+      // Update relay nodes state
+      if (targetPacketId && (collectAllStatsRef.current || trackedPacketIdsRef.current.includes(targetPacketId))) {
+        const cachedSignal = packetSignalRef.current[currentPacketId || ''];
+        const snr = currentSnr || cachedSignal?.snr;
+        const rssi = currentRssi || cachedSignal?.rssi;
+        
+        // Use the port name from the map if we have it (e.g. from a previous packet with same ID)
+        const displayPort = portMapRef.current[targetPacketId] || finalPortName;
 
-          const newEntry = { 
-            id: targetPacketId, 
-            port: portMapRef.current[targetPacketId] || finalPortName, 
-            snr: snr || undefined, 
-            rssi: rssi || undefined,
-            isOutbound: false 
-          };
+        const newEntry = { 
+          id: targetPacketId, 
+          port: displayPort, 
+          snr: snr || undefined, 
+          rssi: rssi || undefined,
+          isOutbound: false 
+        };
           setRelayNodes(prev => {
             const existing = prev.find(n => n.byte === relay);
             if (existing) {
