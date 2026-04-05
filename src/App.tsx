@@ -231,10 +231,11 @@ export default function App() {
   const processLine = (line: string) => {
     lastDataTime.current = Date.now();
     const cleanLine = line.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+    const upperLine = cleanLine.toUpperCase();
     
-    const idMatch = cleanLine.match(/id\s*=\s*(?:0x|!|)([a-f0-9]{8,})/i);
-    const frMatch = cleanLine.match(/(?:fr|from)\s*=\s*(?:0x|!|)([a-f0-9]+)/i);
-    const toMatch = cleanLine.match(/to\s*=\s*(?:0x|!|)([a-f0-9]{8,})/i);
+    const idMatch = cleanLine.match(/(?:id|PacketID)\s*[=:]\s*(?:0x|!|)([a-f0-9]{8,})/i);
+    const frMatch = cleanLine.match(/(?:fr|from)\s*[=:]\s*(?:0x|!|)([a-f0-9]+)/i);
+    const toMatch = cleanLine.match(/(?:to|dest)\s*[=:]\s*(?:0x|!|)([a-f0-9]{8,})/i);
     const relayMatch = cleanLine.match(/relay\s*=\s*0x([a-f0-9]+)/i);
     const reqIdMatch = cleanLine.match(/requestId=(?:0x|!|)([a-f0-9]{8,})/i);
     const portMatch = cleanLine.match(/Portnum=(\d+)/i);
@@ -284,9 +285,9 @@ export default function App() {
     const summaryLogsToAdd: {text: string, type: LogEntry['type']}[] = [];
 
     // Traceroute block parsing
-    if (cleanLine.includes("Route traced:")) {
+    if (upperLine.includes("ROUTE TRACED:")) {
       const reqId = lastTracerouteRequestIdRef.current;
-      const hopPart = cleanLine.split("Route traced:")[1]?.trim();
+      const hopPart = cleanLine.split(/Route traced:/i)[1]?.trim();
       tracerouteStateRef.current = { 
         active: true, 
         requestId: reqId, 
@@ -346,7 +347,7 @@ export default function App() {
       }
 
       // If block ends or we see a new log header
-      if (!cleanLine.includes("-->") && !cleanLine.includes("<--") && !cleanLine.includes("Route traced:")) {
+      if (!cleanLine.includes("-->") && !cleanLine.includes("<--") && !upperLine.includes("ROUTE TRACED:")) {
         if (tracerouteStateRef.current.requestId) {
           const myIdNorm = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
           const formattedLines = tracerouteStateRef.current.lines.map(l => {
@@ -395,21 +396,21 @@ export default function App() {
     // Cache port name
     if (portName !== 'UNKNOWN') {
       portMapRef.current[currentPacketId] = portName;
-    } else if (cleanLine.includes("Received text msg")) {
+    } else if (upperLine.includes("RECEIVED TEXT MSG")) {
       portMapRef.current[currentPacketId] = 'TEXT';
     }
     const finalPortName = portMapRef.current[currentPacketId] || portName;
 
-    const isLoraRx = cleanLine.includes("Lora RX");
-    const isSomeoneRebroadcasting = cleanLine.toLowerCase().includes("someone rebroadcasting for us");
+    const isLoraRx = upperLine.includes("LORA RX");
+    const isSomeoneRebroadcasting = upperLine.includes("SOMEONE REBROADCASTING FOR US");
 
     // 1. Map relay bytes if present
-    const isError = cleanLine.includes("ERROR");
-    const isSendingEvent = cleanLine.includes("Sending packet") || 
-                          cleanLine.includes("Lora TX") || 
-                          cleanLine.includes("Started Tx") ||
-                          cleanLine.includes("Completed sending") ||
-                          cleanLine.includes("enqueue for send");
+    const isError = upperLine.includes("ERROR");
+    const isSendingEvent = upperLine.includes("SENDING PACKET") || 
+                          upperLine.includes("LORA TX") || 
+                          upperLine.includes("STARTED TX") ||
+                          upperLine.includes("COMPLETED SENDING") ||
+                          upperLine.includes("ENQUEUE FOR SEND");
 
     const myIdNormalized = myNodeIdRef.current.toLowerCase().replace(/^(!|0x)/, '');
     const myRelayByte = myIdNormalized.slice(-2).padStart(2, '0');
@@ -434,16 +435,21 @@ export default function App() {
     }
 
     // 2. Detect Source (Our Node) and Start Tracking
-    const isOurPacketTrigger = cleanLine.includes("Received text msg") || 
-                              cleanLine.includes("Completed sending") ||
-                              (cleanLine.includes("PACKET FROM PHONE") && 
-                               (finalPortName === 'TEXT' || finalPortName === 'NODEINFO' || finalPortName === 'ROUTING' || finalPortName === 'TRACE'));
-    const isExplicitlyOurs = currentSourceId && currentSourceId === myIdNormalized;
+    const isFromPhone = upperLine.includes("PACKET FROM PHONE");
+    const isOurPacketTrigger = upperLine.includes("RECEIVED TEXT MSG") || 
+                              upperLine.includes("COMPLETED SENDING") ||
+                              isFromPhone;
+    
+    // If it's from phone, we assume it's ours even if fr= is missing in this specific log line
+    const isExplicitlyOurs = (currentSourceId && currentSourceId === myIdNormalized) || (isFromPhone && !currentSourceId);
+    
     const isSelfAck = currentSourceId && currentDestId && 
                      (currentSourceId === currentDestId) &&
                      (currentSourceId === myIdNormalized);
     
-    const shouldTrack = isOurPacketTrigger && isExplicitlyOurs && !isSelfAck;
+    // We track if it's triggered by our node's activity. 
+    // We allow self-acks if they come from the phone (explicit user action)
+    const shouldTrack = isOurPacketTrigger && (isExplicitlyOurs || isFromPhone) && (!isSelfAck || isFromPhone);
 
     if (shouldTrack) {
       if (!trackedPacketIdsRef.current.includes(currentPacketId)) {
@@ -459,12 +465,12 @@ export default function App() {
     const isTracked = trackedPacketIdsRef.current.includes(currentPacketId) || 
                      (currentRequestId && trackedPacketIdsRef.current.includes(currentRequestId));
     const isToMe = currentDestId && (currentDestId.replace(/^0x/, '') === myIdNormalized);
-    const isDirectAck = cleanLine.includes("Received a ACK") || (isToMe && currentRequestId);
-    const isConclusiveSignal = cleanLine.includes("Rx someone rebroadcasting") || 
-                              cleanLine.includes("Received a ACK") || 
-                              cleanLine.includes("direct response") ||
-                              cleanLine.toLowerCase().includes("rebroadcasting for us");
-    const isRebroadcast = (isSomeoneRebroadcasting || (isLoraRx && cleanLine.includes("relay="))) && 
+    const isDirectAck = upperLine.includes("RECEIVED A ACK") || (isToMe && currentRequestId);
+    const isConclusiveSignal = upperLine.includes("RX SOMEONE REBROADCASTING") || 
+                              upperLine.includes("RECEIVED A ACK") || 
+                              upperLine.includes("DIRECT RESPONSE") ||
+                              upperLine.includes("REBROADCASTING FOR US");
+    const isRebroadcast = (isSomeoneRebroadcasting || (isLoraRx && upperLine.includes("RELAY="))) && 
                          !isSendingEvent;
     
     const isSignalEvent = (isRebroadcast || isDirectAck) && !isSendingEvent;
