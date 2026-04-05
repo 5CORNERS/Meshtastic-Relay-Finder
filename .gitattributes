@@ -1,0 +1,5 @@
+# Ensure images in assets are treated as binary files
+assets/*.png binary
+assets/*.jpg binary
+assets/*.jpeg binary
+assets/*.gif binary
