@@ -1,4 +1,4 @@
-# Ensure images in assets are treated as binary files
+# Ensure images in assets folder are treated as binary files
 assets/*.png binary
 assets/*.jpg binary
 assets/*.jpeg binary
