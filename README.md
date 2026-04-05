@@ -44,7 +44,7 @@ Any Meshtastic node connected via USB outputs a detailed serial log of every int
 
 ## How it Works
 
-<img src="assets/relay-finder-screen.png" width="800" alt="Relay Finder Interface" />
+![Relay Finder Interface](https://le-francais.s3.amazonaws.com/images/QIP_Shot_-_Screen_217.original.png)
 
 Meshtastic Relay Finder is a web application that uses the **Web Serial API** to read the event logs directly from your node via USB.
 
@@ -55,14 +55,14 @@ Meshtastic Relay Finder is a web application that uses the **Web Serial API** to
 - **Grouped Views:**
   - **By Nodes:** See which nodes are acting as your most frequent relays, along with their SNR and RSSI.
   - **By Packets:** See the "life story" of each packet, including which nodes picked it up and relayed it.
-    <img src="assets/nodes-grouped-by-packets.png" width="800" alt="Nodes grouped by packets" />
+    ![Nodes grouped by packets](https://le-francais.s3.amazonaws.com/images/QIP_Shot_-_Screen_213.original.png)
 - **"Collect All" Mode:** Enable this to track every single packet in range, not just your own. This is perfect for real-time antenna tuning, as it provides a constant stream of signal data from the entire neighborhood.
 
 ---
 
 ## Why do we only see the last byte of the Node ID?
 
-![Node ID Identification](https://le-francais.s3.amazonaws.com/images/QIP_Shot_-_Screen_220.original.png)
+![Node ID Identification](https://le-francais.s3.amazonaws.com/images/direct-nodes.original.png)
 
 It's a bit of a mystery to me. Perhaps the developers preferred to keep the relaying node's identity somewhat obscured. While this limited information doesn't allow for a unique identification of a specific node across the entire global network, the situation changes when looking at your local environment.
 
@@ -71,7 +71,7 @@ Since each user typically has a limited list of direct contacts (and only direct
 ---
 
 ### Real-world Example: Antenna Tuning
-<img src="assets/tracking-signal-level-on-the-fly.png" width="800" alt="Real-time signal level tracking" />
+![Real-time signal level tracking](https://le-francais.s3.amazonaws.com/images/QIP_Shot_-_Screen_212.original.png)
 Using the "Collect All" mode, I tested raising my panel antenna just 30 cm higher on a windowsill. The results were immediate: I could see the SNR of distant nodes improve or degrade instantly as I moved the antenna closer to the window frame or metal shutters. I waited to ensure it wasn't just a fluctuation, then moved it back—the values returned to their previous state. It works!
 
 ---
