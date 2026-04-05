@@ -44,7 +44,7 @@ Any Meshtastic node connected via USB outputs a detailed serial log of every int
 
 ## How it Works
 
-![Relay Finder Interface](./assets/relay-finder-screen.png)
+![Relay Finder Interface](assets/relay-finder-screen.png)
 
 Meshtastic Relay Finder is a web application that uses the **Web Serial API** to read the event logs directly from your node via USB.
 
@@ -55,13 +55,13 @@ Meshtastic Relay Finder is a web application that uses the **Web Serial API** to
 - **Grouped Views:**
   - **By Nodes:** See which nodes are acting as your most frequent relays, along with their SNR and RSSI.
   - **By Packets:** See the "life story" of each packet, including which nodes picked it up and relayed it.
-    ![Nodes grouped by packets](./assets/nodes-grouped-by%20packets.png)
+    ![Nodes grouped by packets](assets/nodes-grouped-by-packets.png)
 - **"Collect All" Mode:** Enable this to track every single packet in range, not just your own. This is perfect for real-time antenna tuning, as it provides a constant stream of signal data from the entire neighborhood.
 
 ---
 
 ### Real-world Example: Antenna Tuning
-![Real-time signal level tracking](./assets/tracking-single-level-on-the-fly.png)
+![Real-time signal level tracking](assets/tracking-signal-level-on-the-fly.png)
 Using the "Collect All" mode, I tested raising my panel antenna just 30 cm higher on a windowsill. The results were immediate: I could see the SNR of distant nodes improve or degrade instantly as I moved the antenna closer to the window frame or metal shutters. I waited to ensure it wasn't just a fluctuation, then moved it back—the values returned to their previous state. It works!
 
 ---
